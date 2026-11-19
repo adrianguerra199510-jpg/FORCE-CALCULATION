@@ -282,3 +282,31 @@ test('Techos de volúmenes: geometría, áreas proyectadas y Cp de domo', async 
   near(c.C, -0.5);
   near(W.cpDome(0, 5, 10).A, 0.8);
 });
+
+test('Envolvente por cara: nave, edificio y volumen genérico', () => {
+  // nave: el muro X− gobierna como barlovento con −GCpi; simetría X−/X+ y Y−/Y+
+  let p = defaultProject();
+  p.typology = 'nave';
+  let r = compute(p);
+  let f = Object.fromEntries(r.envelope.groups[0].faces.map((x) => [x.id, x]));
+  const ww = r.wind.transversal.cases.find((c) => c.surface === 'Muro barlovento');
+  near(f['X-'].pMax, Math.max(ww.pPos, ww.pNeg));
+  near(f['X-'].pMax, f['X+'].pMax);
+  near(f['Y-'].pMin, f['Y+'].pMin);
+  assert.equal(r.envelope.groups[0].faces.length, 6);
+  assert.ok(f['RX-'].pMin < 0 && f['X-'].pMin < 0);
+  // edificio: azotea = peor zona con +GCpi
+  p = defaultProject();
+  r = compute(p);
+  f = Object.fromEntries(r.envelope.groups[0].faces.map((x) => [x.id, x]));
+  const qi = (d) => r.wind.directions[d].qh * r.wind.gcpi;
+  const roofMin = Math.min(...['X', 'Y'].flatMap((d) => r.wind.directions[d].roofZones.map((z) => z.pA - qi(d))));
+  near(f.R.pMin, roofMin);
+  const topWW = Math.max(...r.wind.directions.X.rows.map((x) => x.pww)) + qi('X');
+  near(f['X-'].pMax, topWW);
+  // genérico: prisma con 4 caras + techo; cilindro con fuste + domo
+  p = defaultProject();
+  p.typology = 'generico';
+  r = compute(p);
+  assert.deepEqual(r.envelope.groups.map((g) => g.faces.length), [5, 2]);
+});

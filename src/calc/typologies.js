@@ -3,6 +3,7 @@ import * as W from './wind.js';
 import * as S from './seismic.js';
 import { REP } from './rep.js';
 import { findSystem, systemWarnings, BUILDING_SYSTEMS } from './systems.js';
+import { envelopeNave, envelopeEdificio, envelopeGenerico } from './envelope.js';
 
 const G_ACC = 9.81;
 const GAMMA_W = 9.81; // kN/m³
@@ -833,13 +834,31 @@ export function computeGenerico(project) {
     wind.directions[dir] = { ctx: ctx0, gust, G, rows, cols, Vbase, Mbase, Vmin, roofs, perVol };
   }
   wind.ctx = wind.directions.X.ctx;
+  // envolvente de presiones por cara de cada volumen
+  const ctxD = { X: windCtx(project, W.KD.building, 'X'), Y: windCtx(project, W.KD.building, 'Y') };
+  const envelope = envelopeGenerico({
+    vols: vols.map((v) => ({ ...v, rg: rgs.get(v) })),
+    qzAt: (z, d) => W.qz(z, ctxD[d]).q,
+    G: { X: wind.directions.X.G, Y: wind.directions.Y.G },
+    gcpi: W.GCPI[project.wind.enclosure],
+    cpLw: W.cpLeewardWall,
+    roofs: { X: wind.directions.X.roofs, Y: wind.directions.Y.roofs },
+    cfOf: (v, d) => {
+      if (v.tipo === 'abierto') return W.cfTrussTower(v.shape === 'cyl' ? 'triangular' : 'square', +v.eps).Cf * +v.eps;
+      if (v.shape === 'cyl') {
+        const q = W.qz(+v.z0 + +v.h / 2, ctxD[d]).q;
+        return W.cfChimney('round', Math.max(1, +v.h / +v.bx), gp.surface || 'moderadamente liso', +v.bx * Math.sqrt(q * 1000));
+      }
+      return W.cfChimney('square', Math.max(1, +v.h / (d === 'X' ? +v.by : +v.bx)));
+    },
+  });
   if (vols.some((v) => v.shape !== 'cyl' && v.tipo !== 'abierto' && Math.abs(+v.bx / +v.by - 1) > 0.25)) {
     warnings.push('Prismas rectangulares no cuadrados: se usa Cf de sección cuadrada de la Fig. 6-21 (viento normal a la cara). Para edificios cerrados apoyados en el terreno se recomienda la tipología "Edificio" (Cp de la Fig. 6-6).');
   }
   warnings.push('Volumen genérico: no se considera apantallamiento entre cuerpos ni entre columnas (conservador).');
 
   return {
-    typology: 'generico', H: top, levels, seismic, wind, warnings,
+    typology: 'generico', H: top, levels, seismic, wind, warnings, envelope,
     combos: S.loadCombinations(p.SDS),
     geometry: { volumes: vols.map((v) => ({ ...v, bx: +v.bx, by: +v.by, h: +v.h, z0: +v.z0, x: +v.x || 0, y: +v.y || 0, nCols: +v.nCols || 0, dCol: +v.dCol, eps: +v.eps, rg: rgs.get(v) })), top },
   };
@@ -847,8 +866,16 @@ export function computeGenerico(project) {
 
 export function compute(project) {
   switch (project.typology) {
-    case 'edificio': return computeEdificio(project);
-    case 'nave': return computeNave(project);
+    case 'edificio': {
+      const r = computeEdificio(project);
+      r.envelope = envelopeEdificio(r);
+      return r;
+    }
+    case 'nave': {
+      const r = computeNave(project);
+      r.envelope = envelopeNave(r);
+      return r;
+    }
     case 'torre': return computeTorre(project);
     case 'tanque': return computeTanque(project);
     case 'valla': return computeValla(project);

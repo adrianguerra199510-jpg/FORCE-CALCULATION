@@ -557,6 +557,7 @@ export class Viewer {
     if (!res || lc === 'none') return;
     this.arrowRef = this.computeArrowRef();
     const L = this.arrowRef;
+    if (lc === 'env') return this.drawEnvelope(res);
     const fmt = (v) => `${v.toFixed(1)} kN`;
     if (res.typology === 'edificio') {
       const { Bx, By } = res.geometry;
@@ -903,6 +904,89 @@ export class Viewer {
   }
 
 
+
+  // ------------------------------------------------------------- envolvente por cara
+  drawEnvelope(res) {
+    const env = res.envelope;
+    if (!env) return;
+    const all = env.groups.flatMap((g) => g.faces);
+    const vmax = Math.max(...all.map((f) => Math.max(Math.abs(f.pMax), Math.abs(f.pMin))), 1e-9);
+    const short = (f) => ({ R: res.typology === 'edificio' ? 'Azotea' : 'Techo', 'RX-': 'Faldón X−', 'RX+': 'Faldón X+', S: f.name.startsWith('Celosía') ? 'Celosía' : 'Fuste' }[f.id] || `Cara ${f.id.replace('-', '−')}`);
+    const txt = (f, prefix) => `${prefix ? prefix + ' · ' : ''}${short(f)}: ${f.pMax >= 0 ? '+' : ''}${f.pMax.toFixed(2)} / ${f.pMin.toFixed(2)} kPa`;
+    const face = (pts, n, f, prefix) => {
+      if (!f) return;
+      const P = pts.map((q) => new THREE.Vector3(...q));
+      const N = new THREE.Vector3(...n).normalize();
+      const off = N.clone().multiplyScalar(0.04);
+      const tri = [];
+      for (let i = 1; i < P.length - 1; i++) tri.push(P[0].clone().add(off), P[i].clone().add(off), P[i + 1].clone().add(off));
+      const t = Math.max(Math.abs(f.pMax), Math.abs(f.pMin)) / vmax;
+      const col = new THREE.Color(0xfff6c8).lerp(new THREE.Color(0xe0a400), t);
+      this.loads.add(new THREE.Mesh(new THREE.BufferGeometry().setFromPoints(tri), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false })));
+      const edge = [];
+      for (let i = 0; i < P.length; i++) edge.push(P[i].clone().add(off), P[(i + 1) % P.length].clone().add(off));
+      this.loads.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(edge), new THREE.LineBasicMaterial({ color: 0x8a6d00 })));
+      if (this.showLabels) {
+        const c = P.reduce((a, q) => a.add(q), new THREE.Vector3()).multiplyScalar(1 / P.length).add(N.clone().multiplyScalar(0.6));
+        this.loads.add(this.label(txt(f, prefix), c.toArray(), '#1C2A33', '#F2E330'));
+      }
+    };
+    const byId = (g) => Object.fromEntries(g.faces.map((f) => [f.id, f]));
+    if (res.typology === 'edificio') {
+      const { Bx, By, heights } = res.geometry;
+      const H = heights[heights.length - 1];
+      const f = byId(env.groups[0]);
+      face([[0, 0, By], [0, 0, 0], [0, H, 0], [0, H, By]], [-1, 0, 0], f['X-']);
+      face([[Bx, 0, 0], [Bx, 0, By], [Bx, H, By], [Bx, H, 0]], [1, 0, 0], f['X+']);
+      face([[0, 0, 0], [Bx, 0, 0], [Bx, H, 0], [0, H, 0]], [0, 0, -1], f['Y-']);
+      face([[Bx, 0, By], [0, 0, By], [0, H, By], [Bx, H, By]], [0, 0, 1], f['Y+']);
+      face([[0, H, 0], [Bx, H, 0], [Bx, H, By], [0, H, By]], [0, 1, 0], f.R);
+    } else if (res.typology === 'nave') {
+      const { span, length, he, hr } = res.geometry;
+      const f = byId(env.groups[0]);
+      const sA = Math.atan2(hr - he, span / 2);
+      const gable = (z) => [[0, 0, z], [span, 0, z], [span, he, z], [span / 2, hr, z], [0, he, z]];
+      face([[0, 0, length], [0, 0, 0], [0, he, 0], [0, he, length]], [-1, 0, 0], f['X-']);
+      face([[span, 0, 0], [span, 0, length], [span, he, length], [span, he, 0]], [1, 0, 0], f['X+']);
+      face(gable(0), [0, 0, -1], f['Y-']);
+      face(gable(length), [0, 0, 1], f['Y+']);
+      face([[0, he, length], [0, he, 0], [span / 2, hr, 0], [span / 2, hr, length]], [-Math.sin(sA), Math.cos(sA), 0], f['RX-']);
+      face([[span / 2, hr, length], [span / 2, hr, 0], [span, he, 0], [span, he, length]], [Math.sin(sA), Math.cos(sA), 0], f['RX+']);
+    } else if (res.typology === 'generico') {
+      const multi = env.groups.length > 1;
+      for (const v of res.geometry.volumes) {
+        const g = env.groups.find((x) => x.name === v.name);
+        if (!g) continue;
+        const f = byId(g);
+        const pre = multi ? v.name : '';
+        const z0 = v.z0;
+        const z1 = v.rg ? v.rg.eave : v.z0 + v.h;
+        const top = v.rg ? v.rg.top : z1;
+        if (f.S) {
+          const r = v.bx / 2;
+          face([[v.x - r, z0, v.y + r + 0.05], [v.x + r, z0, v.y + r + 0.05], [v.x + r, z1, v.y + r + 0.05], [v.x - r, z1, v.y + r + 0.05]], [0, 0, 1], f.S, pre);
+        } else {
+          const a = v.bx / 2;
+          const b = v.by / 2;
+          const X0 = v.x - a;
+          const X1 = v.x + a;
+          const Z0 = v.y - b;
+          const Z1 = v.y + b;
+          face([[X0, z0, Z1], [X0, z0, Z0], [X0, z1, Z0], [X0, z1, Z1]], [-1, 0, 0], f['X-'], pre);
+          face([[X1, z0, Z0], [X1, z0, Z1], [X1, z1, Z1], [X1, z1, Z0]], [1, 0, 0], f['X+'], pre);
+          face([[X0, z0, Z0], [X1, z0, Z0], [X1, z1, Z0], [X0, z1, Z0]], [0, 0, -1], f['Y-'], pre);
+          face([[X1, z0, Z1], [X0, z0, Z1], [X0, z1, Z1], [X1, z1, Z1]], [0, 0, 1], f['Y+'], pre);
+        }
+        if (f.R) {
+          const a = v.bx / 2;
+          const b = (v.shape === 'cyl' ? v.bx : v.by) / 2;
+          const y = top + 0.05;
+          face([[v.x - a, y, v.y - b], [v.x + a, y, v.y - b], [v.x + a, y, v.y + b], [v.x - a, y, v.y + b]], [0, 1, 0], f.R, pre);
+        }
+      }
+    }
+  }
+
   // ------------------------------------------------------------- entorno de exposición y perfiles de viento
   toWorld(lx, lz) {
     const c = Math.cos(this.terrainRot);
@@ -1034,6 +1118,7 @@ export class Viewer {
     tip.y = yW;
     tail.y = yW;
     const ad = this.arrowDir;
+    if (ad.kind === 'none') return;
     const adir = ad.axis === 'X' ? new THREE.Vector3(ad.sign, 0, 0) : new THREE.Vector3(0, 0, ad.sign);
     const isQuake = ad.kind === 'quake';
     {

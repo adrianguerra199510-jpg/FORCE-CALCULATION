@@ -68,13 +68,13 @@ Precisión, medida con validación cruzada sobre las propias etiquetas de los ma
 
 ## Descarga (Windows)
 
-**[ForceCalculation-REP2021-Setup-1.2.6.exe](https://github.com/adrianguerra199510-jpg/FORCE-CALCULATION/raw/claude/nifty-einstein-5vo4up/instalador/ForceCalculation-REP2021-Setup-1.2.6.exe)** (93 MB, Windows 10/11 de 64 bits)
+**[ForceCalculation-REP2021-Setup-1.3.0.exe](https://github.com/adrianguerra199510-jpg/FORCE-CALCULATION/raw/claude/nifty-einstein-5vo4up/instalador/ForceCalculation-REP2021-Setup-1.3.0.exe)** (93 MB, Windows 10/11 de 64 bits)
 
 1. Descarga y ejecuta el instalador. Permite elegir la carpeta y crea accesos directos en el escritorio y en el menú Inicio.
 2. El instalador no está firmado digitalmente. Windows SmartScreen mostrará "Windows protegió su PC": haz clic en **Más información → Ejecutar de todas formas**.
 3. Los proyectos se guardan como `.fcp`; el instalador asocia esa extensión con la app.
 
-SHA-256: `d289c74a24fc1ed5b19a1f696b2b9fe71d748b2b6c68b6e6fe8b8045b74e2481`
+SHA-256: `dc39287f61ac21d56cdb8117f2805ef5c3024367deeb5389978cae06ec392360`
 
 ## Instalación y uso (desde el código)
 
@@ -94,7 +94,7 @@ Generar el instalador de Windows (desde Windows):
 npm run dist
 ```
 
-El instalador queda en `dist/ForceCalculation-REP2021-Setup-1.2.6.exe`.
+El instalador queda en `dist/ForceCalculation-REP2021-Setup-1.3.0.exe`.
 
 Flujo de trabajo:
 
@@ -103,7 +103,11 @@ Flujo de trabajo:
 3. **Viento:** región, período de retorno, exposición, cerramiento y efecto topográfico opcional.
 4. **Estructura:** tipología, geometría, pesos y sistema resistente.
 5. Revisa el **Modelo 3D**, el **Espectro** y los **Resultados**.
-6. **Exportar Word** o **Exportar PDF**.
+6. **Vista previa** para revisar el reporte completo dentro de la app y, desde ahí, **Exportar Word** o **Exportar PDF**.
+
+En edificio, nave y volumen genérico, el caso **Envolvente** del visor y la sección 6 del reporte
+dan, para cada cara, la presión neta máxima y la succión neta máxima a aplicar (viento ±X, ±Y,
+±GCpi y casos A/B), con el caso que gobierna y el área de la cara.
 
 Los proyectos se guardan como archivos `.fcp` (JSON).
 

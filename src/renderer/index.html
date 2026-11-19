@@ -23,6 +23,7 @@
       <button class="btn ghost" id="btnOpen">Abrir</button>
       <button class="btn ghost" id="btnSave">Guardar</button>
       <span class="sep"></span>
+      <button class="btn" id="btnPreview">Vista previa</button>
       <button class="btn primary" id="btnDocx">Exportar Word</button>
       <button class="btn primary" id="btnPdf">Exportar PDF</button>
     </nav>
@@ -75,6 +76,17 @@
     <aside class="summary" aria-label="Resumen de resultados" aria-live="polite">
       <div id="summary"></div>
     </aside>
+  </div>
+  <div class="preview" id="preview" hidden role="dialog" aria-modal="true" aria-label="Vista previa del reporte">
+    <div class="preview-bar">
+      <strong>Vista previa del reporte</strong>
+      <span class="muted" id="pvInfo"></span>
+      <span class="grow"></span>
+      <button class="btn primary" id="pvDocx">Exportar Word</button>
+      <button class="btn primary" id="pvPdf">Exportar PDF</button>
+      <button class="btn" id="pvClose">Cerrar</button>
+    </div>
+    <div class="preview-body"><iframe id="pvFrame" title="Contenido del reporte"></iframe></div>
   </div>
   <div class="toast" id="toast" role="status" hidden></div>
   <script type="module" src="app.js"></script>

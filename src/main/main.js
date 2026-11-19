@@ -130,6 +130,7 @@ ipcMain.handle('report:pdf', async (_e, model) => {
 });
 
 ipcMain.handle('shell:open', (_e, p) => shell.openPath(p));
+ipcMain.handle('report:html', (_e, model) => buildHtml(model));
 ipcMain.handle('app:version', () => app.getVersion());
 
 function escapeHtml(s) {

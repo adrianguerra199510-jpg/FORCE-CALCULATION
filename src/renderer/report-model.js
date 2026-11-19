@@ -141,7 +141,18 @@ export function buildReportModel(project, res, images) {
   windSection(res, project, { h2, h3, kv, table, eq, para, note });
 
   // 6 ---------------------------------------------------------------------
-  h1('6. Combinaciones de carga');
+  if (res.envelope) {
+    h1('6. Envolvente de cargas de viento por cara');
+    para('Para cada cara se indica la presión neta máxima (hacia la cara) y la succión neta máxima (hacia afuera) que deben aplicarse al diseño, considerando viento en +X, −X, +Y y −Y, presión interna ±GCpi y los casos A/B de techo. Son cargas de servicio (REP-2021 §4.2): aplicar los factores de las combinaciones de carga.');
+    img(images.viewEnv, 'Figura: envolvente de presiones de viento por cara (presión máx. / succión máx., kPa).');
+    for (const g of res.envelope.groups) {
+      table(res.envelope.groups.length > 1 ? `Envolvente – ${g.name}` : 'Envolvente de presiones por cara',
+        ['Cara', 'Presión máx. (kPa)', 'Caso que gobierna', 'Succión máx. (kPa)', 'Caso que gobierna', 'Área (m²)'],
+        g.faces.map((x) => [x.name, (x.pMax >= 0 ? '+' : '') + f(x.pMax, 3), x.govMax, f(x.pMin, 3), x.govMin, f(x.area, 1)]));
+    }
+    note(res.envelope.note);
+    h1('7. Combinaciones de carga');
+  } else h1('6. Combinaciones de carga');
   para('REP-2021 §1.4.1 remite a las combinaciones del Capítulo 2 de ASCE/SEI 7-05.');
   h3('Resistencia (LRFD) – §2.3.2');
   B.push({ t: 'list', items: res.combos.lrfd });
@@ -150,13 +161,13 @@ export function buildReportModel(project, res, images) {
   B.push({ t: 'list', items: res.combos.notes });
 
   // 7 ---------------------------------------------------------------------
-  h1('7. Vistas del modelo');
+  h1(res.envelope ? '8. Vistas del modelo' : '7. Vistas del modelo');
   img(images.viewWind, 'Figura: cargas de viento sobre el modelo.');
   img(images.viewQuake, 'Figura: fuerzas sísmicas sobre el modelo.');
   img(images.profile, 'Figura: comparación de fuerzas de viento (servicio) y sismo (resistencia) por nivel.');
 
   // 8 ---------------------------------------------------------------------
-  h1('8. Observaciones');
+  h1(res.envelope ? '9. Observaciones' : '8. Observaciones');
   if (res.warnings.length) for (const w of res.warnings) note(w, 'warn');
   else para('Sin observaciones adicionales sobre los datos de entrada.');
   note('Las fuerzas sísmicas están a nivel de resistencia (E = ρ·QE ± 0.2·SDS·D) y las de viento a nivel de servicio (REP-2021 §4.2). Compararlas directamente requiere aplicar los factores de las combinaciones de carga.');

@@ -48,6 +48,11 @@ function bindUi() {
   $('#btnSave').addEventListener('click', () => saveProject(false));
   $('#btnDocx').addEventListener('click', () => exportReport('docx'));
   $('#btnPdf').addEventListener('click', () => exportReport('pdf'));
+  $('#btnPreview').addEventListener('click', () => openPreview());
+  $('#pvClose').addEventListener('click', closePreview);
+  $('#pvDocx').addEventListener('click', () => exportReport('docx', state.previewModel));
+  $('#pvPdf').addEventListener('click', () => exportReport('pdf', state.previewModel));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#preview').hidden) closePreview(); });
   document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => viewer.setView(b.dataset.view)));
   $('#optLabels').addEventListener('change', (e) => {
     viewer.showLabels = e.target.checked;
@@ -210,9 +215,9 @@ function renderWindV() {
 
 function loadCaseList(res) {
   switch (res.typology) {
-    case 'edificio': return [['wx', 'Viento X', 'wind'], ['wy', 'Viento Y', 'wind'], ['sx', 'Sismo X', 'quake'], ['sy', 'Sismo Y', 'quake']];
-    case 'nave': return [['wt', 'Viento transversal', 'wind'], ['wl', 'Viento longitudinal', 'wind'], ['sx', 'Sismo X', 'quake'], ['sy', 'Sismo Y', 'quake']];
-    case 'generico': return [['wx', 'Viento X', 'wind'], ['wy', 'Viento Y', 'wind'], ['s', 'Sismo', 'quake']];
+    case 'edificio': return [['wx', 'Viento X', 'wind'], ['wy', 'Viento Y', 'wind'], ['env', 'Envolvente', 'env'], ['sx', 'Sismo X', 'quake'], ['sy', 'Sismo Y', 'quake']];
+    case 'nave': return [['wt', 'Viento transversal', 'wind'], ['wl', 'Viento longitudinal', 'wind'], ['env', 'Envolvente', 'env'], ['sx', 'Sismo X', 'quake'], ['sy', 'Sismo Y', 'quake']];
+    case 'generico': return [['wx', 'Viento X', 'wind'], ['wy', 'Viento Y', 'wind'], ['env', 'Envolvente', 'env'], ['s', 'Sismo', 'quake']];
     case 'valla': return [['wA', 'Viento casos A/B', 'wind'], ...(res.wind.caseC ? [['wC', 'Viento caso C', 'wind']] : []), ['s', 'Sismo', 'quake']];
     default: return [['w', 'Viento', 'wind'], ['s', 'Sismo', 'quake']];
   }
@@ -257,12 +262,16 @@ function windDirFor(r, lc) {
 
 function applyLoadCase() {
   if (!state.res) return;
-  const wd = windDirFor(state.res, state.loadCase);
+  const wd = state.loadCase === 'env' ? { kind: 'none', axis: 'X', sign: 1, label: '' } : windDirFor(state.res, state.loadCase);
   if (wd) viewer.setWindDir(wd);
   viewer.setLoadCase(state.loadCase, { internal: $('#optInternal').value, roofCase: $('#optRoof').value });
   const r = state.res;
   const lc = state.loadCase;
   let txt = '';
+  if (lc === 'env') {
+    $('#viewerLegend').innerHTML = 'Envolvente de viento por cara: <b>presión máx. / succión máx.</b> (kPa) considerando viento ±X, ±Y, ±GCpi y casos A/B';
+    return;
+  }
   if (r.typology === 'edificio') {
     const dir = lc.endsWith('x') ? 'X' : 'Y';
     txt = lc.startsWith('w') ? `Viento ${dir} (servicio): cortante basal <b>${f(r.wind.directions[dir].Vbase, 1)} kN</b>, G = ${f(r.wind.directions[dir].G, 3)}` : `Sismo ${dir} (resistencia): V = <b>${f(r.seismic.directions[dir].V, 1)} kN</b>, Cs = ${f(r.seismic.directions[dir].Cs, 4)}`;
@@ -460,10 +469,20 @@ async function collectImages() {
   const sCase = cases.find((c) => c[2] === 'quake')[0];
   viewer.resetCamera();
   viewer.controls.update();
-  for (const [key, lc] of [['viewWind', wCase], ['viewQuake', sCase]]) {
+  const eCase = cases.find((c) => c[0] === 'env');
+  for (const [key, lc] of [['viewWind', wCase], ['viewQuake', sCase], ...(eCase ? [['viewEnv', 'env']] : [])]) {
     state.loadCase = lc;
     applyLoadCase();
-    images[key] = { data: viewer.snapshot(1400, 840), ratio: 0.6 };
+    if (lc === 'env') {
+      // la envolvente se captura sin entorno y con la cámara cerca, para leer los valores por cara
+      viewer.setEnvironment({ show: false });
+      viewer.resetCamera();
+      viewer.controls.update();
+      images[key] = { data: viewer.snapshot(1400, 840), ratio: 0.6 };
+      viewer.setEnvironment({ show: $('#optEnv').checked });
+      viewer.resetCamera();
+      viewer.controls.update();
+    } else images[key] = { data: viewer.snapshot(1400, 840), ratio: 0.6 };
   }
   state.loadCase = prevCase;
   renderLoadCases();
@@ -481,12 +500,34 @@ async function collectImages() {
   return images;
 }
 
-async function exportReport(kind) {
+async function buildModelWithImages() {
+  const images = await collectImages();
+  return buildReportModel(state.project, state.res, images);
+}
+
+/** Vista previa: el mismo HTML con el que se genera el PDF, dentro de la app. */
+async function openPreview() {
+  if (!state.res) return toast('Corrige los datos antes de ver el reporte.');
+  toast('Preparando la vista previa…');
+  const model = await buildModelWithImages();
+  state.previewModel = model;
+  const html = await window.api.reportHtml(model);
+  $('#pvFrame').srcdoc = html;
+  $('#pvInfo').textContent = `${model.subtitle}`;
+  $('#preview').hidden = false;
+  hideToast();
+}
+
+function closePreview() {
+  $('#preview').hidden = true;
+  state.previewModel = null;
+}
+
+async function exportReport(kind, cachedModel) {
   if (!state.res) return toast('Corrige los datos antes de exportar.');
   toast(kind === 'docx' ? 'Generando el reporte Word…' : 'Generando el reporte PDF…');
   try {
-    const images = await collectImages();
-    const model = buildReportModel(state.project, state.res, images);
+    const model = cachedModel || (await buildModelWithImages());
     const out = kind === 'docx' ? await window.api.exportDocx(model) : await window.api.exportPdf(model);
     if (out) toast(`Reporte guardado en ${out}`, () => window.api.openPath(out));
     else hideToast();
@@ -565,6 +606,14 @@ async function selfTest() {
       await window.api.selftest.capture(`${variant}-tab-${tab}`);
     }
     showTab('modelo');
+    if (variant === 'edificio' || variant === 'nave') {
+      await openPreview();
+      await wait(1200);
+      await window.api.selftest.capture(`${variant}-vista-previa`);
+      const doc = $('#pvFrame').contentDocument;
+      await log(`${variant} vista previa: ${doc ? doc.querySelectorAll('h1').length : 0} secciones, ${doc ? doc.querySelectorAll('img').length : 0} figuras, envolvente=${doc && doc.body.textContent.includes('Envolvente de cargas') ? 'sí' : 'no'}`);
+      closePreview();
+    }
     const d = await exportReport('docx');
     const p = await exportReport('pdf');
     await log(`${variant}: docx=${d} pdf=${p}`);
