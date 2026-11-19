@@ -371,9 +371,9 @@ function renderSpectrum() {
   attachSpectrumHover(wrap.querySelector('svg'), r.seismic.params, document.querySelector('.chart-tip'));
 }
 
-function profileRows(r) {
+function profileRows(r, dir = 'X') {
   if (r.typology === 'edificio') {
-    return r.seismic.directions.X.levels.map((l, i) => ({ name: l.name, quake: l.F, wind: r.wind.directions.X.rows[i].F }));
+    return r.seismic.directions[dir].levels.map((l, i) => ({ name: l.name, quake: l.F, wind: r.wind.directions[dir].rows[i].F }));
   }
   if (r.typology === 'torre') {
     return r.wind.segs.map((s) => {
@@ -396,8 +396,10 @@ function renderTables() {
   // Reutiliza el modelo de reporte (sin imágenes) para mostrar todas las tablas en pantalla.
   const model = buildReportModel(state.project, r, {});
   const html = [];
-  const rows = profileRows(r);
-  if (rows) html.push(`<h2>Fuerzas por nivel: viento X frente a sismo X</h2><div class="chart-wrap">${profileSVG(rows, { w: 900, windLabel: 'Viento (servicio)', quakeLabel: 'Sismo (resistencia)' })}</div>`);
+  for (const dir of r.typology === 'edificio' ? ['X', 'Y'] : ['X']) {
+    const rows = profileRows(r, dir);
+    if (rows) html.push(`<h2>Fuerzas por nivel: viento ${dir} frente a sismo ${dir}</h2><div class="chart-wrap">${profileSVG(rows, { w: 900, windLabel: `Viento ${dir} (servicio)`, quakeLabel: `Sismo ${dir} (resistencia)` })}</div>`);
+  }
   for (const b of model.blocks) {
     if (b.t === 'h1') html.push(`<h2>${b.text}</h2>`);
     else if (b.t === 'h2' || b.t === 'h3') html.push(`<h3>${b.text}</h3>`);
@@ -465,32 +467,41 @@ async function collectImages() {
   showTab('modelo');
   await new Promise((ok) => requestAnimationFrame(ok));
   const cases = loadCaseList(r);
-  const wCase = cases.find((c) => c[2] === 'wind')[0];
-  const sCase = cases.find((c) => c[2] === 'quake')[0];
+  // una vista por cada caso de carga (viento y sismo en todas las direcciones) + la envolvente
   viewer.resetCamera();
   viewer.controls.update();
-  const eCase = cases.find((c) => c[0] === 'env');
-  for (const [key, lc] of [['viewWind', wCase], ['viewQuake', sCase], ...(eCase ? [['viewEnv', 'env']] : [])]) {
+  images.views = [];
+  for (const [lc, label, kind] of cases) {
     state.loadCase = lc;
     applyLoadCase();
-    if (lc === 'env') {
+    if (kind === 'env') {
       // la envolvente se captura sin entorno y con la cámara cerca, para leer los valores por cara
       viewer.setEnvironment({ show: false });
       viewer.resetCamera();
       viewer.controls.update();
-      images[key] = { data: viewer.snapshot(1400, 840), ratio: 0.6 };
+      images.viewEnv = { data: viewer.snapshot(1400, 840), ratio: 0.6 };
       viewer.setEnvironment({ show: $('#optEnv').checked });
       viewer.resetCamera();
       viewer.controls.update();
-    } else images[key] = { data: viewer.snapshot(1400, 840), ratio: 0.6 };
+    } else {
+      images.views.push({
+        data: viewer.snapshot(1400, 840), ratio: 0.6,
+        caption: `Figura: ${label} – ${kind === 'wind' ? 'cargas de viento (nivel de servicio)' : 'fuerzas sísmicas (nivel de resistencia)'}.`,
+      });
+    }
   }
   state.loadCase = prevCase;
   renderLoadCases();
   applyLoadCase();
   showTab(prevTab);
   images.spectrum = await svgToPng(spectrumSVG(r.seismic.params, spectrumMarkers(r), { w: 900, h: 440 }));
-  const rows = profileRows(r);
-  if (rows) images.profile = await svgToPng(profileSVG(rows, { w: 900, windLabel: 'Viento (servicio)', quakeLabel: 'Sismo (resistencia)' }));
+  images.profiles = [];
+  for (const dir of r.typology === 'edificio' ? ['X', 'Y'] : ['X']) {
+    const pr = profileRows(r, dir);
+    if (!pr) continue;
+    const im = await svgToPng(profileSVG(pr, { w: 900, windLabel: `Viento ${dir} (servicio)`, quakeLabel: `Sismo ${dir} (resistencia)` }));
+    images.profiles.push({ ...im, caption: `Figura: fuerzas por nivel en dirección ${dir}: viento (servicio) y sismo (resistencia).` });
+  }
   if (state.project.site.source === 'mapa') {
     const a = await mapView.sheetCrop('Ss');
     const b = await mapView.sheetCrop('S1');

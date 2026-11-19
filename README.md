@@ -68,13 +68,13 @@ Precisión, medida con validación cruzada sobre las propias etiquetas de los ma
 
 ## Descarga (Windows)
 
-**[ForceCalculation-REP2021-Setup-1.3.0.exe](https://github.com/adrianguerra199510-jpg/FORCE-CALCULATION/raw/claude/nifty-einstein-5vo4up/instalador/ForceCalculation-REP2021-Setup-1.3.0.exe)** (93 MB, Windows 10/11 de 64 bits)
+**[ForceCalculation-REP2021-Setup-1.3.1.exe](https://github.com/adrianguerra199510-jpg/FORCE-CALCULATION/raw/claude/nifty-einstein-5vo4up/instalador/ForceCalculation-REP2021-Setup-1.3.1.exe)** (93 MB, Windows 10/11 de 64 bits)
 
 1. Descarga y ejecuta el instalador. Permite elegir la carpeta y crea accesos directos en el escritorio y en el menú Inicio.
 2. El instalador no está firmado digitalmente. Windows SmartScreen mostrará "Windows protegió su PC": haz clic en **Más información → Ejecutar de todas formas**.
 3. Los proyectos se guardan como `.fcp`; el instalador asocia esa extensión con la app.
 
-SHA-256: `dc39287f61ac21d56cdb8117f2805ef5c3024367deeb5389978cae06ec392360`
+SHA-256: `77090e3dfba8eb5f2a8da51544b68afe6bde9793646e4a824922ba2daab76b62`
 
 ## Instalación y uso (desde el código)
 
@@ -94,7 +94,7 @@ Generar el instalador de Windows (desde Windows):
 npm run dist
 ```
 
-El instalador queda en `dist/ForceCalculation-REP2021-Setup-1.3.0.exe`.
+El instalador queda en `dist/ForceCalculation-REP2021-Setup-1.3.1.exe`.
 
 Flujo de trabajo:
 

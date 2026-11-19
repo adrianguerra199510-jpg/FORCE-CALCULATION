@@ -162,9 +162,8 @@ export function buildReportModel(project, res, images) {
 
   // 7 ---------------------------------------------------------------------
   h1(res.envelope ? '8. Vistas del modelo' : '7. Vistas del modelo');
-  img(images.viewWind, 'Figura: cargas de viento sobre el modelo.');
-  img(images.viewQuake, 'Figura: fuerzas sísmicas sobre el modelo.');
-  img(images.profile, 'Figura: comparación de fuerzas de viento (servicio) y sismo (resistencia) por nivel.');
+  for (const v of images.views || []) img(v, v.caption);
+  for (const pf of images.profiles || []) img(pf, pf.caption);
 
   // 8 ---------------------------------------------------------------------
   h1(res.envelope ? '9. Observaciones' : '8. Observaciones');
