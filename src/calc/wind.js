@@ -232,3 +232,99 @@ export function integrateQ(z0, z1, ctx, n = 8) {
 
 /** Carga mínima §6.1.4.1: 0.48 kPa sobre el área proyectada */
 export const MIN_WIND_PRESSURE = 0.48;
+
+// ---------------------------------------------------------------------------
+// Fig. 6-20: muros independientes sólidos y anuncios sólidos (§6.5.14)
+// ---------------------------------------------------------------------------
+const SIGN_SH = [0.16, 0.2, 0.3, 0.5, 0.7, 0.9, 1.0];
+const SIGN_BS = [0.05, 0.1, 0.2, 0.5, 1, 2, 4, 5, 10, 20, 30, 45];
+const SIGN_CF_AB = {
+  0.16: [1.95, 1.9, 1.85, 1.85, 1.8, 1.8, 1.85, 1.85, 1.85, 1.9, 1.9, 1.95],
+  0.2: [1.95, 1.9, 1.85, 1.85, 1.8, 1.8, 1.8, 1.8, 1.85, 1.9, 1.9, 1.95],
+  0.3: [1.95, 1.9, 1.85, 1.8, 1.8, 1.8, 1.8, 1.8, 1.8, 1.85, 1.85, 1.85],
+  0.5: [1.95, 1.85, 1.8, 1.75, 1.75, 1.7, 1.7, 1.7, 1.7, 1.7, 1.7, 1.75],
+  0.7: [1.9, 1.85, 1.75, 1.7, 1.65, 1.6, 1.6, 1.55, 1.55, 1.55, 1.55, 1.55],
+  0.9: [1.85, 1.75, 1.7, 1.6, 1.55, 1.5, 1.45, 1.45, 1.4, 1.4, 1.4, 1.4],
+  1.0: [1.8, 1.7, 1.65, 1.55, 1.45, 1.4, 1.35, 1.35, 1.3, 1.3, 1.3, 1.3],
+};
+
+/** Cf casos A y B (interpolación bilineal en s/h y B/s). */
+export function cfSignAB(sOverH, BoverS) {
+  const sh = clamp(sOverH, 0.16, 1.0);
+  const rows = SIGN_SH.map((k) => interp1(BoverS, SIGN_BS, SIGN_CF_AB[k]));
+  return interp1(sh, SIGN_SH, rows);
+}
+
+// Caso C: regiones desde el borde de barlovento (anchos de s, la última es el "resto").
+// Regiones unificadas: [0-s, s-2s, 2s-3s, 3s-4s, 4s-5s, 5s-10s, >10s]
+const CASEC_BS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 13, 45];
+const CASEC = {
+  2: [2.25, 1.5, null, null, null, null, null],
+  3: [2.6, 1.7, 1.15, null, null, null, null],
+  4: [2.9, 1.9, 1.3, 1.1, 1.1, 1.1, null],
+  5: [3.1, 2.0, 1.45, 1.05, 1.05, 1.05, null],
+  6: [3.3, 2.15, 1.55, 1.05, 1.05, 1.05, null],
+  7: [3.4, 2.25, 1.65, 1.05, 1.05, 1.05, null],
+  8: [3.55, 2.3, 1.7, 1.05, 1.05, 1.05, null],
+  9: [3.65, 2.35, 1.75, 1.0, 1.0, 1.0, null],
+  10: [3.75, 2.45, 1.85, 0.95, 0.95, 0.95, null],
+  13: [4.0, 2.6, 2.0, 1.5, 1.35, 0.9, 0.55],
+  45: [4.3, 2.55, 1.95, 1.85, 1.85, 1.1, 0.55],
+};
+const CASEC_STAR_FROM = 5; // valores con * (región 0-s, B/s ≥ 5) se reducen por esquina de retorno
+
+function caseCcol(bs, region) {
+  // valor de la columna; si la región no existe en esa columna, se usa el último definido
+  const col = CASEC[bs];
+  for (let r = region; r >= 0; r--) if (col[r] !== null) return col[r];
+  return col[0];
+}
+
+/** Factor de reducción por esquina de retorno (Lr/s). */
+export function returnCornerFactor(LrOverS) {
+  if (!(LrOverS > 0)) return 1;
+  return interp1(LrOverS, [0, 0.3, 1.0, 2.0], [1.0, 0.9, 0.75, 0.6]);
+}
+
+/**
+ * Regiones del caso C para un anuncio de ancho B y alto s.
+ * Devuelve [{x0, x1, Cf, starred}]
+ */
+export function cfSignCaseC(B, s, LrOverS = 0) {
+  const bs = clamp(B / s, 2, 45);
+  const regionsX = [];
+  const cuts = [0, 1, 2, 3, 4, 5, 10].map((k) => k * s);
+  for (let r = 0; r < 7; r++) {
+    const x0 = cuts[r];
+    const x1 = r < 6 ? Math.min(cuts[r + 1], B) : B;
+    if (x0 >= B) break;
+    regionsX.push({ r, x0, x1 });
+  }
+  // la última región es el "resto" hasta B
+  regionsX[regionsX.length - 1].x1 = B;
+  let i = 0;
+  while (i < CASEC_BS.length - 2 && bs > CASEC_BS[i + 1]) i++;
+  const b0 = CASEC_BS[i];
+  const b1 = CASEC_BS[Math.min(i + 1, CASEC_BS.length - 1)];
+  const rc = returnCornerFactor(LrOverS);
+  return regionsX.map(({ r, x0, x1 }) => {
+    const v = lerp(bs, b0, b1, caseCcol(b0, r), caseCcol(b1, r));
+    const starred = r === 0 && bs >= CASEC_STAR_FROM;
+    return { x0, x1, Cf: starred ? v * rc : v, starred };
+  });
+}
+
+/** Nota 2: anuncios sólidos con aberturas < 30 %: factor (1 − (1 − ε)^1.5). */
+export function openingsFactor(eps) {
+  if (!(eps < 1)) return 1;
+  return 1 - Math.pow(1 - eps, 1.5);
+}
+
+// Fig. 6-22: anuncios abiertos y armazones de celosía
+export function cfOpenSign(eps, members = 'plano', Dsqrtq = 0) {
+  const row = eps < 0.1 ? 0 : eps < 0.3 ? 1 : 2;
+  if (members === 'redondo') {
+    return Dsqrtq <= 5.3 ? [1.2, 1.3, 1.5][row] : [0.8, 0.9, 1.1][row];
+  }
+  return [2.0, 1.8, 1.6][row];
+}

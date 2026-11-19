@@ -15,6 +15,7 @@ de la memoria de cálculo a **Word (.docx)** y **PDF**.
 | Nave industrial a dos aguas | Cp de muros y techo (Fig. 6-6), ±GCpi, casos A/B, cargas lineales por marco | Cortante basal y por marco |
 | Torre de celosía / chimenea / poste | Cf de Fig. 6-23 (ε) o Fig. 6-21, factor de ráfaga flexible Gf, accesorios (Cf·A) | No-edificio Tabla 15.4-2, período manual o Rayleigh con EI |
 | Tanque elevado | Recipiente y soporte (patas o pedestal) | Péndulo invertido con masa de agua, Tabla 15.4-2 |
+| Valla publicitaria (en terreno o sobre la azotea de una edificación de N niveles) | Anuncio sólido (Fig. 6-20, casos A, B y C con torsión, aberturas y esquina de retorno) o abierto (Fig. 6-22), más los postes | En terreno: no-edificio "Signs and billboards" (R = 3.5, Cs ≥ 0.03). En azotea: componente no estructural Cap. 13 (Fp con ap = Rp = 2.5 y 1 + 2z/h) |
 
 Disposiciones propias del REP-2021 incluidas:
 

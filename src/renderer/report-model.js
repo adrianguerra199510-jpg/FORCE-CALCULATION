@@ -69,14 +69,36 @@ export function buildReportModel(project, res, images) {
   img(images.spectrum, 'Figura: espectro de respuesta de diseño (ASCE 7-05 §11.4.5) con los períodos de la estructura.');
 
   // 4 ---------------------------------------------------------------------
-  h1('4. Fuerzas sísmicas – procedimiento de fuerza lateral equivalente');
-  const kind = res.typology === 'torre' || res.typology === 'tanque' ? 'nonbuilding' : 'building';
+  const kind = ['torre', 'tanque', 'valla'].includes(res.typology) ? 'nonbuilding' : 'building';
+  if (res.seismic.component) {
+    const c = res.seismic.component;
+    h1('4. Fuerzas sísmicas – componente no estructural sobre la edificación (ASCE 7-05 Cap. 13)');
+    para('La valla está apoyada en la azotea y su peso es pequeño frente al de la edificación, por lo que se diseña como componente no estructural (ASCE 7-05 §15.3.1 y §13.3).');
+    kv([
+      ['Peso de la valla Wp', `${f(c.Wp, 1)} kN`],
+      ['Factor de amplificación ap', f(c.ap, 2), 'Tabla 13.5-1 (Signs and Billboards)'],
+      ['Factor de modificación Rp', f(c.Rp, 2), 'Tabla 13.5-1'],
+      ['Factor de importancia Ip', f(c.Ip, 2), '§13.1.3'],
+      ['z (punto de apoyo) / h (altura de azotea)', `${f(c.z, 2)} m / ${f(c.h, 2)} m`],
+      ['1 + 2·z/h', f(c.amp, 3)],
+      ['Fp = 0.4·ap·SDS·Wp·(1 + 2z/h)/(Rp/Ip)', `${f(c.Fcalc, 2)} kN`, 'Ec. 13.3-1'],
+      ['Fp máximo = 1.6·SDS·Ip·Wp', `${f(c.Fmax, 2)} kN`, 'Ec. 13.3-2'],
+      ['Fp mínimo = 0.3·SDS·Ip·Wp', `${f(c.Fmin, 2)} kN`, 'Ec. 13.3-3'],
+      ['Fp de diseño', `${f(c.Fp, 2)} kN (${f(c.Fp / c.Wp, 3)}·Wp)`, c.governs],
+      ['Fuerza vertical concurrente ±0.2·SDS·Wp', `${f(c.Fv, 2)} kN`, '§13.3.1'],
+      ['Momento de volteo en el apoyo (azotea)', `${f(c.Mbase, 1)} kN·m`],
+      ['Período de la valla (informativo)', `${f(c.T, 3)} s`, c.Tsource],
+    ]);
+    table('Distribución de Fp proporcional al peso', ['Elemento', 'h sobre la azotea (m)', 'w (kN)', 'F (kN)', 'V (kN)'],
+      [...c.levels].reverse().map((l) => [l.name, f(l.h, 2), f(l.w, 2), f(l.F, 2), f(l.Vstory, 2)]));
+  } else h1('4. Fuerzas sísmicas – procedimiento de fuerza lateral equivalente');
   for (const [dir, r] of Object.entries(res.seismic.directions)) {
     if (res.typology === 'nave' && dir === 'Y' && res.seismic.directions.X.V === r.V) {
       para('En la dirección Y se usa el mismo sistema y período; el cortante basal es igual al de la dirección X.');
       continue;
     }
     h2(kind === 'building' ? `Dirección ${dir}` : 'Análisis sísmico');
+    if (res.typology === 'valla') para('Valla a nivel de terreno: estructura no-edificio no similar a edificios (Tabla 15.4-2, "Signs and billboards"), con el cortante mínimo de REP-2021 §5.2.1. Las alturas se miden desde la base de los postes.');
     kv([
       ['Sistema resistente', r.system.label, kind === 'building' ? 'Tabla 12.2-1' : 'Tabla 15.4-2'],
       ['R / Ω0 / Cd', `${r.system.R} / ${r.system.Omega0} / ${r.system.Cd}`],
@@ -180,6 +202,16 @@ function describeGeometry(res, project, kv) {
       ['Ancho base / punta', `${f(g.bBase, 2)} m / ${f(g.bTop, 2)} m`],
       ['Segmentos de cálculo', String(g.nSeg)],
     ]);
+  } else if (res.typology === 'valla') {
+    const v = project.valla;
+    kv([
+      ['Apoyo', g.onRoof ? `Sobre la azotea de una edificación de ${g.nSt} niveles (azotea a ${f(g.Hb, 2)} m)` : 'A nivel de terreno'],
+      ['Anuncio B × s', `${f(g.B, 2)} m × ${f(g.s, 2)} m (${v.panel === 'abierta' ? 'abierto' : 'sólido'}, ε = ${f(v.eps, 2)})`],
+      ['Altura libre bajo el anuncio', `${f(g.c, 2)} m`],
+      ['Borde superior sobre el terreno h', `${f(g.zt, 2)} m`],
+      ['Postes', `${g.nP} × ${g.postShape === 'square' ? 'cuadrado' : 'Ø'} ${f(g.D, 2)} m`],
+      ['Peso total de la valla', `${f(res.Wp, 1)} kN`],
+    ]);
   } else if (res.typology === 'tanque') {
     kv([
       ['Diámetro / altura del tanque', `${f(g.D, 2)} m / ${f(g.Ht, 2)} m`],
@@ -250,6 +282,32 @@ function windSection(res, project, { h2, h3, kv, table, eq, para, note }) {
       project.torre.kind === 'celosia' ? ['Segmento', 'z (m)', 'Kz', 'qz (kPa)', 'ε', 'Cf', 'Af (m²)', 'F (kN)', 'V (kN)'] : ['Segmento', 'z (m)', 'Kz', 'qz (kPa)', 'D (m)', 'Cf', 'Af (m²)', 'F (kN)', 'V (kN)'],
       [...d.segs].reverse().map((s) => [s.name, `${f(s.z0, 1)}–${f(s.z1, 1)}`, f(s.Kz, 3), f(s.qz, 4), project.torre.kind === 'celosia' ? f(s.eps, 3) : f(s.b, 2), f(s.Cf, 3), f(s.Af, 2), f(s.F, 2), f(s.Vstory, 2)]));
     if (d.appForces.length) table('Fuerzas sobre accesorios', ['Accesorio', 'z (m)', 'qz (kPa)', 'Cf·A (m²)', 'F (kN)'], d.appForces.map((a) => [a.name, f(a.z, 1), f(a.qz, 4), f(a.EPA, 2), f(a.F, 2)]));
+  } else if (res.typology === 'valla') {
+    const d = res.wind;
+    kv([
+      ['h (borde superior sobre el terreno)', `${f(d.zt, 2)} m`, 'Fig. 6-20'],
+      ['qh', `${f(d.qh, 4)} kPa`, `Kh = ${f(d.Kzh, 3)}`],
+      ['s/h  ·  B/s', `${f(d.sh, 3)}  ·  ${f(d.Bs, 2)}`],
+      ...gustRows(d.gust),
+      ...(d.solid ? [['Cf casos A y B', f(d.CfAB, 3), 'Fig. 6-20'], ['Factor por aberturas (1 − (1 − ε)^1.5)', f(d.openings, 3), 'Fig. 6-20 Nota 2']] : [['Cf anuncio abierto', f(d.open.Cf, 2), 'Fig. 6-22'], ['Área sólida Af = ε·B·s', `${f(d.open.Af, 2)} m²`]]),
+    ]);
+    eq(d.solid ? 'F = qh·G·Cf·As  (ASCE 7-05 §6.5.14)' : 'F = qz·G·Cf·Af  (ASCE 7-05 §6.5.15, qz en el centroide)');
+    table('Casos de carga de viento sobre el anuncio', ['Caso', 'F (kN)', 'z de la resultante (m)', 'Excentricidad horizontal (m)', 'Torsión (kN·m)'],
+      d.cases.map((c) => [c.name, f(c.F, 2), f(c.z, 2), f(c.ex, 2), f(c.MT, 1)]));
+    if (d.caseC) {
+      table(`Caso C – regiones desde el borde de barlovento (factor (1.8 − s/h) = ${f(d.caseC.reduction, 3)})`, ['Región', 'Cf tabla', 'Cf neto', 'F (kN)'],
+        d.caseC.regions.map((r) => [`${f(r.x0, 2)} – ${f(r.x1, 2)} m${r.starred ? ' *' : ''}`, f(r.Cf, 3), f(r.Cfnet, 3), f(r.F, 2)]));
+      if (project.valla.Lr > 0) para('* Valor reducido por esquina de retorno (Fig. 6-20).');
+    }
+    table('Viento sobre los postes expuestos (Fig. 6-21)', ['Elemento', 'q̄z (kPa)', 'Cf', 'Af (m²)', 'F (kN)'], [[`${d.posts.n} poste(s) Ø/lado ${f(d.posts.D, 2)} m`, f(d.posts.q, 4), f(d.posts.Cf, 3), f(d.posts.Af, 2), f(d.posts.F, 2)]]);
+    kv([
+      ['Caso que gobierna (fuerza)', d.governing],
+      ['Cortante en la base de la valla', `${f(d.Vbase, 2)} kN`],
+      ['Momento de volteo en la base', `${f(d.Mbase, 1)} kN·m`],
+      ['Torsión máxima (casos B/C)', `${f(d.MTmax, 1)} kN·m`],
+      ['Carga mínima 0.48 kPa sobre el área proyectada', `${f(d.Vmin, 1)} kN`, '§6.1.4.1'],
+    ]);
+    if (d.Hb > 0) para('Para la valla sobre la azotea, h y s/h se miden desde el terreno y qh se evalúa en el borde superior del anuncio (criterio conservador; ASCE 7-05 no trata explícitamente los anuncios sobre techos).');
   } else if (res.typology === 'tanque') {
     const d = res.wind;
     kv([...gustRows(d.gust), ['Cortante basal', `${f(d.Vbase, 1)} kN`], ['Momento de volteo', `${f(d.Mbase, 1)} kN·m`]]);

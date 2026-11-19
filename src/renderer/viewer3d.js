@@ -108,7 +108,7 @@ export class Viewer {
     return sp;
   }
 
-  arrow(from, dir, len, color, label) {
+  arrow(from, dir, len, color, label, labelDy = 0) {
     // flecha sólida (cilindro + cono); 'from' es la cola, la punta toca la estructura
     const d = new THREE.Vector3(...dir).normalize();
     const o = new THREE.Vector3(...from);
@@ -126,6 +126,7 @@ export class Viewer {
     this.loads.add(shaft, head);
     if (label && this.showLabels) {
       const tail = o.clone().add(d.clone().multiplyScalar(-this.size * 0.03));
+      tail.y += labelDy;
       this.loads.add(this.label(label, tail.toArray(), '#ffffff', color === COL.quake ? '#C8102E' : color === COL.suction ? '#7A3EA0' : '#1F5FA8'));
     }
   }
@@ -156,6 +157,7 @@ export class Viewer {
     else if (t === 'nave') this.buildNave(res);
     else if (t === 'torre') this.buildTorre(res);
     else if (t === 'tanque') this.buildTanque(res);
+    else if (t === 'valla') this.buildValla(res);
   }
 
   buildEdificio(res) {
@@ -281,6 +283,49 @@ export class Viewer {
     this.center = [0, (Hs + Ht) / 2, 0];
   }
 
+
+  buildValla(res) {
+    const g = res.geometry;
+    const W = g.onRoof ? g.Bx : g.B * 1.6;
+    const Dd = g.onRoof ? g.By : g.B * 0.8;
+    this.ground(W, Dd);
+    if (g.onRoof) {
+      const hs = [];
+      for (let i = 0; i < g.nSt; i++) hs.push(g.firstStoryHeight + i * g.storyHeight);
+      const pts = [];
+      const xs = [0, g.Bx / 2, g.Bx];
+      const zs = [0, g.By / 2, g.By];
+      for (const x of xs) for (const z of zs) pts.push([x, 0, z], [x, g.Hb, z]);
+      for (const y of hs) {
+        for (const z of zs) pts.push([0, y, z], [g.Bx, y, z]);
+        for (const x of xs) pts.push([x, y, 0], [x, y, g.By]);
+      }
+      this.model.add(this.line(pts, COL.member));
+      for (const y of hs) {
+        const slab = new THREE.Mesh(new THREE.BoxGeometry(g.Bx, 0.15, g.By), new THREE.MeshStandardMaterial({ color: COL.slab, transparent: true, opacity: 0.3 }));
+        slab.position.set(g.Bx / 2, y, g.By / 2);
+        this.model.add(slab);
+      }
+    }
+    const cx = W / 2;
+    const cz = Dd / 2;
+    this.signOrigin = [cx - g.B / 2, g.zb, cz]; // esquina inferior de barlovento del anuncio
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(g.B, g.s, 0.25), new THREE.MeshStandardMaterial({ color: g.panel === 'abierta' ? 0xb9c6ca : 0xe9edee, roughness: 0.8, transparent: g.panel === 'abierta', opacity: g.panel === 'abierta' ? 0.55 : 1 }));
+    panel.position.set(cx, g.zb + g.s / 2, cz);
+    const edge = new THREE.LineSegments(new THREE.EdgesGeometry(panel.geometry), new THREE.LineBasicMaterial({ color: COL.member }));
+    edge.position.copy(panel.position);
+    this.model.add(panel, edge);
+    for (let i = 0; i < g.nP; i++) {
+      const x = g.nP === 1 ? cx : cx - g.B / 2 + (g.B * (i + 0.5)) / g.nP;
+      const geo = g.postShape === 'square' ? new THREE.BoxGeometry(g.D, g.zt - g.Hb, g.D) : new THREE.CylinderGeometry(g.D / 2, g.D / 2, g.zt - g.Hb, 24);
+      const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x6f7f86, roughness: 0.6 }));
+      m.position.set(x, (g.Hb + g.zt) / 2, cz - 0.4);
+      this.model.add(m);
+    }
+    this.size = Math.max(g.zt, W) * 0.85;
+    this.center = [cx, g.zt / 2, cz];
+  }
+
   // ------------------------------------------------------------- cargas
   setLoadCase(lc, opts = {}) {
     this.clear(this.loads);
@@ -324,6 +369,41 @@ export class Viewer {
         for (const l of lv) {
           const len = (L * l.F) / Fmax;
           this.arrow([-half(l.h) - len - 0.3, l.h, 0], [1, 0, 0], len, COL.quake, fmt(l.F));
+        }
+      }
+    } else if (res.typology === 'valla') {
+      const g = res.geometry;
+      const [x0, , zc] = this.signOrigin;
+      const cx = x0 + g.B / 2;
+      if (lc === 'wA' || lc === 'wC') {
+        const items = [];
+        if (lc === 'wC' && res.wind.caseC) {
+          for (const r of res.wind.caseC.regions) items.push({ x: x0 + r.xc, y: g.zb + g.s / 2, F: r.F, label: `${fmt(r.F)} (Cf ${r.Cfnet.toFixed(2)})` });
+        } else {
+          const k = res.wind.cases.find((c) => c.name === 'Caso B') || res.wind.cases[0];
+          const a = res.wind.cases[0];
+          items.push({ x: cx, y: a.z, F: a.F, label: `${a.name}: ${fmt(a.F)}` });
+          if (k !== a) items.push({ x: x0 + g.B / 2 - k.ex, y: k.z, F: k.F, label: `Caso B (e = 0.2B): ${fmt(k.F)}`, dy: -g.s * 0.22 });
+        }
+        if (res.wind.posts.F > 0) items.push({ x: cx, y: res.wind.posts.z, F: res.wind.posts.F, label: `Postes: ${fmt(res.wind.posts.F)}` });
+        const Fmax = Math.max(...items.map((i) => i.F));
+        for (const it of items) {
+          const len = Math.max((L * it.F) / Fmax, L * 0.15);
+          this.arrow([it.x, it.y, zc + len + 0.6], [0, 0, -1], len, COL.wind, it.label, it.dy || 0);
+        }
+      } else {
+        const lv = res.seismic.component ? res.seismic.component.levels : res.seismic.directions.X.levels;
+        // postes agrupados en una resultante para no saturar la vista
+        const posts = lv.filter((l) => l.name !== 'Anuncio');
+        const Fpost = posts.reduce((a, l) => a + l.F, 0);
+        const zPost = Fpost > 0 ? posts.reduce((a, l) => a + l.F * l.h, 0) / Fpost : 0;
+        const pan = lv.find((l) => l.name === 'Anuncio');
+        const items = [{ h: pan.h, F: pan.F, label: `${res.seismic.component ? 'Fp' : 'F'} anuncio: ${fmt(pan.F)}` }];
+        if (Fpost > 0) items.push({ h: zPost, F: Fpost, label: `Postes: ${fmt(Fpost)}` });
+        const Fmax = Math.max(...items.map((i) => i.F));
+        for (const it of items) {
+          const len = Math.max((L * it.F) / Fmax, L * 0.15);
+          this.arrow([cx, g.Hb + it.h, zc + len + 0.6], [0, 0, -1], len, COL.quake, it.label);
         }
       }
     } else if (res.typology === 'tanque') {

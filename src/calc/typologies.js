@@ -12,6 +12,7 @@ export const TYPOLOGIES = {
   nave: 'Nave industrial con techo a dos aguas',
   torre: 'Torre de celosía / chimenea / poste',
   tanque: 'Tanque elevado',
+  valla: 'Valla publicitaria (en terreno o sobre edificación)',
 };
 
 function sum(a, f = (x) => x) {
@@ -440,12 +441,133 @@ export function computeTanque(project) {
   };
 }
 
+
+// =============================================================================
+// VALLA PUBLICITARIA (terreno o azotea)
+// =============================================================================
+export function computeValla(project) {
+  const v = project.valla;
+  const onRoof = v.apoyo === 'azotea';
+  const nSt = Math.max(1, Math.round(+v.nStories || 1));
+  const Hb = onRoof ? +v.firstStoryHeight + (nSt - 1) * +v.storyHeight : 0; // altura de la azotea
+  const B = +v.B;
+  const s_ = +v.s;
+  const c = +v.clearance;
+  const nP = Math.max(1, Math.round(+v.nPosts));
+  const D = +v.postD;
+  const zb = Hb + c; // borde inferior del anuncio sobre el terreno
+  const zt = zb + s_; // borde superior
+  const Hs = c + s_; // altura de la estructura de la valla sobre su base
+
+  // ---- masas y período (voladizo desde su base)
+  const wPostTot = nP * +v.wPost;
+  const levels = [];
+  const nSeg = 4;
+  for (let i = 0; i < nSeg; i++) levels.push({ name: `Poste ${i + 1}`, h: ((i + 0.5) * c) / nSeg, w: (wPostTot * c) / nSeg });
+  levels.push({ name: 'Anuncio', h: c + s_ / 2, w: +v.Wpanel + wPostTot * s_ });
+  const Wp = sum(levels, (l) => l.w);
+  let T;
+  let Tmethod;
+  if (v.periodMethod === 'manual') {
+    T = +v.T;
+    Tmethod = 'Período ingresado por el usuario';
+  } else {
+    T = rayleighPeriod(Hs, levels, () => nP * +v.EIpost);
+    Tmethod = `Rayleigh (voladizo de ${nP} poste${nP > 1 ? 's' : ''}, EI = ${nP} × ${(+v.EIpost).toExponential(2)} kN·m²)`;
+  }
+
+  // ---- sismo
+  const p = seismicCommon(project);
+  const warnings = stdWarnings(p, project);
+  const seismic = { params: p, directions: {} };
+  if (!onRoof) {
+    const sys = findSystem(v.system);
+    const r = S.equivalentLateralForce({ p, system: sys, hn: Hs, Tuser: T, levels, kind: 'nonbuildingNotSimilar' });
+    r.Tsource = Tmethod;
+    seismic.directions.X = r;
+  } else {
+    const cf = S.componentForce({ p, ap: +v.ap, Rp: +v.Rp, Ip: +v.Ip, Wp, z: Hb, h: Hb });
+    const lv = levels.map((l) => ({ ...l, F: (cf.Fp * l.w) / Wp }));
+    let acc = 0;
+    for (let i = lv.length - 1; i >= 0; i--) {
+      acc += lv[i].F;
+      lv[i].Vstory = acc;
+    }
+    cf.levels = lv;
+    cf.V = cf.Fp;
+    cf.Mbase = sum(lv, (l) => l.F * l.h);
+    cf.T = T;
+    cf.Tsource = Tmethod;
+    seismic.component = cf;
+    warnings.push(`Valla sobre la azotea: se diseña como componente no estructural (ASCE 7-05 §13.3, Tabla 13.5-1, aplicable cuando su peso es menor al 25 % del peso combinado, §15.3.1). Agregar Wp = ${Wp.toFixed(1)} kN al peso sísmico de la azotea y las reacciones de la valla al diseño del edificio.`);
+  }
+
+  // ---- viento
+  const ctx = windCtx(project, W.KD.solidSign);
+  const gust = W.gustFactor({ exposure: ctx.exposure, h: zt, B, L: Math.max(D, 0.5), n1: 1 / T, beta: +project.wind.beta || 0.02, V: ctx.V, rigidMode: project.wind.rigidMode });
+  const G = gust.G;
+  const sh = s_ / zt;
+  const Bs = B / s_;
+  const qh = W.qz(zt, ctx);
+  const wind = { ctx, gust, G, sh, Bs, qh: qh.q, Kzh: qh.Kz, zb, zt, Hb, solid: v.panel !== 'abierta', cases: [] };
+  const As = B * s_;
+  const zcGeom = zb + s_ / 2;
+  if (wind.solid) {
+    const fo = W.openingsFactor(+v.eps);
+    const CfAB = W.cfSignAB(sh, Bs);
+    const F = qh.q * G * CfAB * fo * As;
+    const dz = sh >= 0.99 ? 0.05 * zt : 0;
+    wind.openings = fo;
+    wind.CfAB = CfAB;
+    wind.cases.push({ name: 'Caso A', F, z: zcGeom + dz, ex: 0, MT: 0 });
+    wind.cases.push({ name: 'Caso B', F, z: zcGeom + dz, ex: 0.2 * B, MT: F * 0.2 * B });
+    if (Bs >= 2) {
+      const red = sh > 0.8 ? 1.8 - sh : 1;
+      const regs = W.cfSignCaseC(B, s_, (+v.Lr || 0) / s_).map((r) => {
+        const Fr = qh.q * G * r.Cf * red * fo * s_ * (r.x1 - r.x0);
+        return { ...r, Cfnet: r.Cf * red * fo, F: Fr, xc: (r.x0 + r.x1) / 2 };
+      });
+      const Fc = sum(regs, (r) => r.F);
+      const xr = sum(regs, (r) => r.F * r.xc) / Fc;
+      wind.caseC = { regions: regs, reduction: red, F: Fc, xr };
+      wind.cases.push({ name: 'Caso C', F: Fc, z: zcGeom + dz, ex: B / 2 - xr, MT: Fc * (B / 2 - xr) });
+    }
+  } else {
+    const eps = +v.eps;
+    const qc = W.qz(zcGeom, ctx);
+    const Cf = W.cfOpenSign(eps, v.members, (+v.memberD || 0) * Math.sqrt(qc.q * 1000));
+    const F = qc.q * G * Cf * eps * As;
+    wind.open = { eps, Cf, qz: qc.q, Af: eps * As };
+    wind.cases.push({ name: 'Anuncio abierto (Fig. 6-22)', F, z: zcGeom, ex: 0, MT: 0 });
+  }
+  // postes expuestos bajo el anuncio
+  const qPost = c > 0 ? W.integrateQ(Hb, zb, ctx) / c : 0;
+  const CfPost = W.cfChimney(v.postShape === 'square' ? 'square' : 'round', Hs / D, 'moderadamente liso', D * Math.sqrt(qPost * 1000));
+  const Fposts = nP * qPost * G * CfPost * D * c;
+  wind.posts = { n: nP, D, q: qPost, Cf: CfPost, Af: nP * D * c, F: Fposts, z: Hb + c / 2 };
+  const gov = wind.cases.reduce((a, b) => (b.F > a.F ? b : a));
+  wind.governing = gov.name;
+  wind.Vbase = gov.F + Fposts;
+  wind.Mbase = gov.F * (gov.z - Hb) + Fposts * (c / 2);
+  wind.MTmax = Math.max(...wind.cases.map((k) => Math.abs(k.MT)));
+  wind.Vmin = W.MIN_WIND_PRESSURE * (As + nP * D * c);
+  if (gov.F + Fposts < wind.Vmin) warnings.push(`Viento: la fuerza total es menor que la carga mínima de 0.48 kPa sobre el área proyectada (${wind.Vmin.toFixed(1)} kN, §6.1.4.1).`);
+  if (onRoof) warnings.push('El viento sobre el propio edificio no se incluye en esta tipología; usar la tipología "Edificio" para el sistema principal del edificio.');
+
+  return {
+    typology: 'valla', H: zt, levels, T, Wp, seismic, wind, warnings,
+    combos: S.loadCombinations(p.SDS),
+    geometry: { onRoof, Hb, nSt, Bx: +v.Bx, By: +v.By, firstStoryHeight: +v.firstStoryHeight, storyHeight: +v.storyHeight, B, s: s_, c, nP, D, zb, zt, postShape: v.postShape, panel: v.panel },
+  };
+}
+
 export function compute(project) {
   switch (project.typology) {
     case 'edificio': return computeEdificio(project);
     case 'nave': return computeNave(project);
     case 'torre': return computeTorre(project);
     case 'tanque': return computeTanque(project);
+    case 'valla': return computeValla(project);
     default: throw new Error('Tipología desconocida: ' + project.typology);
   }
 }
@@ -479,6 +601,12 @@ export function defaultProject() {
     tanque: {
       D: 6, Ht: 5, Hw: 4.5, Hs: 20, support: 'patas', nLegs: 4, dLeg: 0.4, Dped: 3,
       Wshell: 250, Wsupport: 300, periodMethod: 'rigidez', K: 6000, T: 1.0, system: 'T1', surface: 'moderadamente liso',
+    },
+    valla: {
+      apoyo: 'terreno', nStories: 4, firstStoryHeight: 3.5, storyHeight: 3.0, Bx: 18, By: 14,
+      B: 12, s: 4, clearance: 8, panel: 'solida', eps: 1.0, members: 'plano', memberD: 0.05, Lr: 0,
+      nPosts: 1, postShape: 'round', postD: 0.9, Wpanel: 45, wPost: 3.5,
+      periodMethod: 'rayleigh', EIpost: 1.2e6, T: 1.0, system: 'P2', ap: 2.5, Rp: 2.5, Ip: 1.0,
     },
   };
 }

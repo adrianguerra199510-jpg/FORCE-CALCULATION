@@ -186,6 +186,7 @@ function loadCaseList(res) {
   switch (res.typology) {
     case 'edificio': return [['wx', 'Viento X', 'wind'], ['wy', 'Viento Y', 'wind'], ['sx', 'Sismo X', 'quake'], ['sy', 'Sismo Y', 'quake']];
     case 'nave': return [['wt', 'Viento transversal', 'wind'], ['wl', 'Viento longitudinal', 'wind'], ['sx', 'Sismo X', 'quake'], ['sy', 'Sismo Y', 'quake']];
+    case 'valla': return [['wA', 'Viento casos A/B', 'wind'], ...(res.wind.caseC ? [['wC', 'Viento caso C', 'wind']] : []), ['s', 'Sismo', 'quake']];
     default: return [['w', 'Viento', 'wind'], ['s', 'Sismo', 'quake']];
   }
 }
@@ -214,10 +215,20 @@ function applyLoadCase() {
     txt = lc.startsWith('w') ? `Viento ${dir} (servicio): cortante basal <b>${f(r.wind.directions[dir].Vbase, 1)} kN</b>, G = ${f(r.wind.directions[dir].G, 3)}` : `Sismo ${dir} (resistencia): V = <b>${f(r.seismic.directions[dir].V, 1)} kN</b>, Cs = ${f(r.seismic.directions[dir].Cs, 4)}`;
   } else if (r.typology === 'nave') {
     txt = lc.startsWith('w') ? `Presión neta por superficie (kPa). Azul = presión, morado = succión. GCpi ${$('#optInternal').value === 'pos' ? '+' : '−'}${f(r.wind.gcpi, 2)}` : `Sismo: V = <b>${f(r.seismic.directions.X.V, 1)} kN</b> (≈ ${f(r.seismic.perFrame, 1)} kN por marco interior)`;
+  } else if (r.typology === 'valla') {
+    const sm = seismicMain(r);
+    txt = lc.startsWith('w')
+      ? `Viento (servicio): gobierna ${r.wind.governing}; cortante en la base de la valla <b>${f(r.wind.Vbase, 1)} kN</b>, momento <b>${f(r.wind.Mbase, 1)} kN·m</b>, torsión máx. ${f(r.wind.MTmax, 1)} kN·m`
+      : r.seismic.component ? `Sismo (Cap. 13): Fp = <b>${f(sm.V, 1)} kN</b> = ${f(sm.V / r.Wp, 3)}·Wp` : `Sismo: V = <b>${f(sm.V, 1)} kN</b>, T = ${f(sm.T, 3)} s`;
   } else {
     txt = lc === 'w' ? `Viento: cortante basal <b>${f(r.wind.Vbase, 1)} kN</b>, momento <b>${f(r.wind.Mbase, 1)} kN·m</b>` : `Sismo: V = <b>${f(r.seismic.directions.X.V, 1)} kN</b>, T = ${f(r.seismic.directions.X.T, 3)} s`;
   }
   $('#viewerLegend').innerHTML = txt;
+}
+
+/** Resultado sísmico principal (FLE en X, o fuerza de componente para valla en azotea). */
+function seismicMain(r) {
+  return r.seismic.directions.X || r.seismic.component;
 }
 
 // ------------------------------------------------------------------ resumen
@@ -230,7 +241,7 @@ function renderSummary() {
   }
   const r = state.res;
   const p = r.seismic.params;
-  const sx = r.seismic.directions.X;
+  const sx = seismicMain(r);
   const sy = r.seismic.directions.Y;
   let windK = '';
   if (r.typology === 'edificio') {
@@ -239,13 +250,18 @@ function renderSummary() {
   } else if (r.typology === 'nave') {
     const maxUp = Math.min(...r.wind.transversal.cases.concat(r.wind.longitudinal.cases).filter((c) => c.surface.startsWith('Techo')).flatMap((c) => [c.pPos, c.pNeg]));
     windK = `<div class="kpi wind full"><div class="v">${f(maxUp, 2)}</div><div class="l">kPa · succión neta máxima en techo</div></div>`;
+  } else if (r.typology === 'valla') {
+    windK = `<div class="kpi wind"><div class="v">${f(r.wind.Vbase, 1)}</div><div class="l">kN · cortante por viento</div></div>
+             <div class="kpi wind"><div class="v">${f(r.wind.Mbase, 0)}</div><div class="l">kN·m · volteo por viento</div></div>`;
   } else {
     windK = `<div class="kpi wind"><div class="v">${f(r.wind.Vbase, 0)}</div><div class="l">kN · cortante por viento</div></div>
              <div class="kpi wind"><div class="v">${f(r.wind.Mbase, 0)}</div><div class="l">kN·m · volteo por viento</div></div>`;
   }
   const quakeK = sy && r.typology === 'edificio'
     ? `<div class="kpi quake"><div class="v">${f(sx.V, 0)}</div><div class="l">kN · sismo X</div></div><div class="kpi quake"><div class="v">${f(sy.V, 0)}</div><div class="l">kN · sismo Y</div></div>`
-    : `<div class="kpi quake"><div class="v">${f(sx.V, 0)}</div><div class="l">kN · cortante sísmico</div></div><div class="kpi quake"><div class="v">${f(sx.Cs, 4)}</div><div class="l">Cs</div></div>`;
+    : r.seismic.component
+      ? `<div class="kpi quake"><div class="v">${f(sx.V, 1)}</div><div class="l">kN · Fp (Cap. 13)</div></div><div class="kpi quake"><div class="v">${f(sx.V / r.Wp, 3)}</div><div class="l">Fp / Wp</div></div>`
+      : `<div class="kpi quake"><div class="v">${f(sx.V, r.typology === 'valla' ? 1 : 0)}</div><div class="l">kN · cortante sísmico</div></div><div class="kpi quake"><div class="v">${f(sx.Cs, 4)}</div><div class="l">Cs</div></div>`;
   el.innerHTML = `
     <h3>Sitio</h3>
     <div class="tags"><span class="tag">Ss ${f(s.Ss, 2)} g</span><span class="tag">S1 ${f(s.S1, 2)} g</span><span class="tag">Clase ${p.siteClass}</span></div>
@@ -274,7 +290,7 @@ function spectrumMarkers(r) {
     const b = r.seismic.directions.Y;
     return Math.abs(a.T - b.T) < 1e-6 ? [{ T: a.T, label: 'X, Y' }] : [{ T: a.T, label: 'X' }, { T: b.T, label: 'Y' }];
   }
-  return [{ T: r.seismic.directions.X.T, label: 'T' }];
+  return [{ T: seismicMain(r).T, label: 'T' }];
 }
 
 function renderSpectrum() {
@@ -449,31 +465,34 @@ async function selfTest() {
   mapView.pick(-79.535, 8.952);
   await wait(400);
   await log(`site ${JSON.stringify(state.project.site)}`);
-  for (const typ of Object.keys(TYPOLOGIES)) {
+  for (const variant of [...Object.keys(TYPOLOGIES), 'valla-azotea']) {
+    const typ = variant.split('-')[0];
     state.project.typology = typ;
-    state.project.meta.nombre = `Prueba ${typ}`;
+    state.project.valla.apoyo = variant === 'valla-azotea' ? 'azotea' : 'terreno';
+    if (variant === 'valla-azotea') state.project.valla.clearance = 2;
+    state.project.meta.nombre = `Prueba ${variant}`;
     renderAllForms();
     doCompute(true);
     await wait(600);
     const r = state.res;
-    await log(`${typ}: Vsismo=${f(r.seismic.directions.X.V, 1)} warnings=${r.warnings.length}`);
+    await log(`${variant}: Vsismo=${f(seismicMain(r).V, 1)} warnings=${r.warnings.length}`);
     for (const lc of loadCaseList(r)) {
       state.loadCase = lc[0];
       renderLoadCases();
       applyLoadCase();
       await wait(350);
-      await window.api.selftest.capture(`${typ}-${lc[0]}`);
+      await window.api.selftest.capture(`${variant}-${lc[0]}`);
     }
     for (const tab of ['mapa', 'espectro', 'tablas']) {
       if (typ !== 'edificio' && tab === 'mapa') continue;
       showTab(tab);
       await wait(500);
-      await window.api.selftest.capture(`${typ}-tab-${tab}`);
+      await window.api.selftest.capture(`${variant}-tab-${tab}`);
     }
     showTab('modelo');
     const d = await exportReport('docx');
     const p = await exportReport('pdf');
-    await log(`${typ}: docx=${d} pdf=${p}`);
+    await log(`${variant}: docx=${d} pdf=${p}`);
   }
   await log('OK');
   await window.api.selftest.done();

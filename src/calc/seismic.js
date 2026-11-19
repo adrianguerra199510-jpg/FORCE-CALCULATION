@@ -256,3 +256,18 @@ export function loadCombinations(SDS, rho = 1.0) {
     ],
   };
 }
+
+/**
+ * Fuerza sísmica de diseño en componentes no estructurales (ASCE 7-05 §13.3.1).
+ * Fp = 0.4·ap·SDS·Wp·(1 + 2z/h)/(Rp/Ip), con 0.3·SDS·Ip·Wp ≤ Fp ≤ 1.6·SDS·Ip·Wp
+ */
+export function componentForce({ p, ap, Rp, Ip, Wp, z, h }) {
+  const zz = Math.min(Math.max(z, 0), h);
+  const amp = 1 + (2 * zz) / h;
+  const Fcalc = (0.4 * ap * p.SDS * Wp * amp) / (Rp / Ip);
+  const Fmax = 1.6 * p.SDS * Ip * Wp;
+  const Fmin = 0.3 * p.SDS * Ip * Wp;
+  const Fp = Math.min(Math.max(Fcalc, Fmin), Fmax);
+  const governs = Fp === Fcalc ? 'Ec. 13.3-1' : Fp === Fmax ? 'Máximo, Ec. 13.3-2' : 'Mínimo, Ec. 13.3-3';
+  return { ap, Rp, Ip, Wp, z: zz, h, amp, Fcalc, Fmax, Fmin, Fp, governs, Fv: 0.2 * p.SDS * Wp };
+}

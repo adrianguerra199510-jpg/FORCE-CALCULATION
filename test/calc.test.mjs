@@ -145,3 +145,50 @@ test('Cálculo completo de las cuatro tipologías', () => {
     if (typ === 'torre' || typ === 'tanque') assert.ok(r.wind.Vbase > 0);
   }
 });
+
+test('Fig. 6-20: Cf de anuncios sólidos (casos A/B y C) y Fig. 6-22', () => {
+  near(W.cfSignAB(1.0, 1), 1.45);
+  near(W.cfSignAB(0.16, 45), 1.95);
+  near(W.cfSignAB(0.3, 3), 1.8);
+  near(W.cfSignAB(0.4, 2), 1.75); // entre 0.3 (1.80) y 0.5 (1.70)
+  const c4 = W.cfSignCaseC(12, 3); // B/s = 4
+  assert.deepEqual(c4.map((r) => r.Cf), [2.9, 1.9, 1.3, 1.1]);
+  near(c4[3].x1, 12);
+  const c10 = W.cfSignCaseC(30, 3, 1); // B/s = 10, Lr/s = 1 → 0.75 sobre 3.75*
+  near(c10[0].Cf, 3.75 * 0.75);
+  near(W.openingsFactor(0.8), 1 - Math.pow(0.2, 1.5));
+  near(W.cfOpenSign(0.2, 'plano'), 1.8);
+  near(W.cfOpenSign(0.5, 'redondo', 3), 1.5);
+});
+
+test('Fp de componentes (§13.3.1) con límites', () => {
+  const p = S.designParameters({ Ss: 1.0, S1: 0.4, siteClass: 'D', occupancy: 'II' });
+  const c = S.componentForce({ p, ap: 2.5, Rp: 2.5, Ip: 1, Wp: 100, z: 12, h: 12 });
+  near(c.Fp, 0.4 * 2.5 * p.SDS * 100 * 3 / 2.5);
+  const c0 = S.componentForce({ p, ap: 1, Rp: 12, Ip: 1, Wp: 100, z: 0, h: 12 });
+  near(c0.Fp, 0.3 * p.SDS * 100);
+});
+
+test('Valla publicitaria en terreno y en azotea', () => {
+  const p = defaultProject();
+  p.typology = 'valla';
+  p.valla.B = 12; p.valla.s = 4; p.valla.clearance = 8;
+  let r = compute(p);
+  // qh a 12 m, G y Cf A/B (s/h = 1/3, B/s = 3)
+  const ctx = W.windContext({ region: 'Pacifico', returnPeriod: 50, exposure: 'C', occupancy: 'II', Kd: 0.85 });
+  const qh = W.qz(12, ctx).q;
+  const A = r.wind.cases.find((c) => c.name === 'Caso A');
+  near(A.F, qh * r.wind.G * W.cfSignAB(1 / 3, 3) * 48, 1e-6);
+  assert.ok(r.wind.caseC, 'B/s ≥ 2 requiere caso C');
+  near(r.wind.cases.find((c) => c.name === 'Caso B').MT, A.F * 0.2 * 12, 1e-6);
+  assert.equal(r.seismic.directions.X.system.id, 'P2');
+  assert.ok(r.seismic.directions.X.Cs >= 0.03 - 1e-12);
+  // azotea de 4 niveles: 3.5 + 3·3.0 = 12.5 m
+  p.valla.apoyo = 'azotea';
+  p.valla.clearance = 2;
+  r = compute(p);
+  near(r.geometry.Hb, 12.5);
+  near(r.wind.zt, 18.5);
+  near(r.seismic.component.amp, 3);
+  near(r.seismic.component.Fp, (0.4 * 2.5 * r.seismic.params.SDS * r.Wp * 3) / 2.5, 1e-6);
+});
