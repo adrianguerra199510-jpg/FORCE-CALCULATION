@@ -746,8 +746,6 @@ export class Viewer {
       const t = Math.min(1, Math.abs(p) / pmax);
       return new THREE.Color(0xffffff).lerp(new THREE.Color(p >= 0 ? COL.wind : COL.suction), 0.25 + 0.75 * t);
     };
-    const spacing = Math.max(span, length) / 9;
-    const arrowLen = (p) => (Math.abs(p) / pmax) * spacing * 1.1 + spacing * 0.15;
     /**
      * Superficie poligonal con presión p (kPa, + hacia la superficie) y normal exterior n.
      * Se colorea y se cubre con un campo de flechas: la carga actúa en toda la superficie.
@@ -762,42 +760,14 @@ export class Viewer {
       for (let i = 1; i < P.length - 1; i++) tri.push(P[0].clone().add(off), P[i].clone().add(off), P[i + 1].clone().add(off));
       const geo = new THREE.BufferGeometry().setFromPoints(tri);
       this.loads.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: color(p), transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false })));
-      // base local del plano
-      const u = P[1].clone().sub(P[0]).normalize();
-      const v = N.clone().cross(u).normalize();
-      const pts2 = P.map((q) => [q.clone().sub(P[0]).dot(u), q.clone().sub(P[0]).dot(v)]);
-      const xs = pts2.map((q) => q[0]);
-      const ys = pts2.map((q) => q[1]);
-      const inside = (x, y) => {
-        let c = false;
-        for (let i = 0, j = pts2.length - 1; i < pts2.length; j = i++) {
-          const [xi, yi] = pts2[i];
-          const [xj, yj] = pts2[j];
-          if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
-        }
-        return c;
-      };
-      const x0 = Math.min(...xs);
-      const x1 = Math.max(...xs);
-      const y0 = Math.min(...ys);
-      const y1 = Math.max(...ys);
-      const nu = Math.max(1, Math.round((x1 - x0) / spacing));
-      const nv = Math.max(1, Math.round((y1 - y0) / spacing));
-      const len = arrowLen(p);
-      for (let i = 0; i < nu; i++) {
-        for (let j = 0; j < nv; j++) {
-          const x = x0 + ((x1 - x0) * (i + 0.5)) / nu;
-          const y = y0 + ((y1 - y0) * (j + 0.5)) / nv;
-          if (!inside(x, y)) continue;
-          const at = P[0].clone().add(u.clone().multiplyScalar(x)).add(v.clone().multiplyScalar(y)).add(off);
-          if (p >= 0) this.thinArrow(at.clone().add(N.clone().multiplyScalar(len)), N.clone().negate(), len, COL.wind);
-          else this.thinArrow(at, N, len, COL.suction);
-        }
-      }
-      if (this.showLabels) {
-        const c = P.reduce((a, q) => a.add(q), new THREE.Vector3()).multiplyScalar(1 / P.length).add(N.clone().multiplyScalar(len + 0.4));
-        this.loads.add(this.label(`${label ? label + ': ' : ''}${p.toFixed(2)} kPa`, c.toArray(), '#ffffff', p >= 0 ? '#1F5FA8' : '#7A3EA0'));
-      }
+      // una flecha por superficie en su centro (estilo de la versión 1.2.0):
+      // hacia la superficie si hay presión (p > 0), alejándose si hay succión (p < 0)
+      const c = P.reduce((acc, q) => acc.add(q), new THREE.Vector3()).multiplyScalar(1 / P.length).add(off);
+      const len = (this.size * 0.16 * Math.abs(p)) / pmax + 0.5;
+      if (p >= 0) this.arrow(c.clone().add(N.clone().multiplyScalar(len)).toArray(), N.clone().negate().toArray(), len, COL.wind);
+      else this.arrow(c.toArray(), N.toArray(), len, COL.suction);
+      if (this.showLabels) this.loads.add(this.label(`${p.toFixed(2)} kPa`, c.clone().add(N.clone().multiplyScalar(0.3)).toArray(), '#ffffff', p >= 0 ? '#1F5FA8' : '#7A3EA0'));
+      void label;
     };
     const sA = Math.atan2(hr - he, span / 2);
     const nL = [-Math.sin(sA), Math.cos(sA), 0];
