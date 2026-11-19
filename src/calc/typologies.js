@@ -55,7 +55,18 @@ function seismicCommon(project) {
   return p;
 }
 
-function windCtx(project, Kd) {
+/**
+ * Relieve aplicable a una dirección de viento. El relieve se define con la cresta
+ * perpendicular a la dirección X (x medido a lo largo de X). Para crestas y escarpes 2D
+ * el viento en Y es paralelo a la cresta y no hay aumento de velocidad (Kzt = 1);
+ * la colina 3D es axisimétrica y aplica en ambas direcciones.
+ */
+export function topoFor(topo, dir = 'X') {
+  if (topo && topo.enabled && dir === 'Y' && topo.type !== 'hill3D') return { ...topo, enabled: false, parallel: true };
+  return topo;
+}
+
+function windCtx(project, Kd, dir = 'X') {
   const w = project.wind;
   return W.windContext({
     region: w.region,
@@ -64,7 +75,7 @@ function windCtx(project, Kd) {
     exposure: w.exposure,
     occupancy: project.site.occupancy,
     Kd,
-    topo: w.topo,
+    topo: topoFor(w.topo, dir),
   });
 }
 
@@ -113,6 +124,7 @@ export function computeEdificio(project) {
   const gcpi = W.GCPI[project.wind.enclosure];
   const wind = { ctx, directions: {}, gcpi };
   for (const dir of ['X', 'Y']) {
+    const ctx = windCtx(project, W.KD.building, dir);
     // viento soplando en dirección X: ancho expuesto B = By, profundidad L = Bx
     const B = dir === 'X' ? +e.By : +e.Bx;
     const L = dir === 'X' ? +e.Bx : +e.By;
@@ -160,7 +172,7 @@ export function computeEdificio(project) {
       netUplift: qh.q * G * zn.A - qh.q * gcpi,
     }));
     wind.directions[dir] = {
-      B, L, H, n1, gust, G, qh: qh.q, Kzh: qh.Kz, cpLw, rows, Fbase, Vbase, Mbase, Vmin, torsion, roofZones,
+      B, L, H, n1, gust, G, qh: qh.q, Kzh: qh.Kz, cpLw, rows, Fbase, Vbase, Mbase, Vmin, torsion, roofZones, topoApplies: !!ctx.topo?.enabled,
       pSide: qh.q * G * W.CP_SIDE_WALL,
     };
   }
@@ -239,6 +251,9 @@ export function computeNave(project) {
   {
     const B = S_;
     const L = Lg;
+    const ctxY = windCtx(project, W.KD.building, 'Y');
+    const qh = W.qz(h, ctxY);
+    const qe = W.qz(he, ctxY);
     const gust = W.gustFactor({ exposure: ctx.exposure, h, B, L, n1, beta: +project.wind.beta || 0.02, V: ctx.V, rigidMode: project.wind.rigidMode });
     const G = gust.G;
     const cpLw = W.cpLeewardWall(L / B);
@@ -250,7 +265,7 @@ export function computeNave(project) {
       ...zones.map((z) => ({ name: `Techo ${z.x0.toFixed(1)}–${z.x1.toFixed(1)} m`, Cp: [z.A, z.B], q: qh.q, x0: z.x0, x1: z.x1 })),
     ];
     const cases = buildNaveCases(surfaces, G, gcpi, qh.q, s);
-    wind.longitudinal = { B, L, gust, G, cpLw, zones, surfaces, cases };
+    wind.longitudinal = { B, L, gust, G, cpLw, zones, surfaces, cases, qh: qh.q, qe: qe.q, topoApplies: !!ctxY.topo?.enabled };
   }
   const Vmin = W.MIN_WIND_PRESSURE * Lg * hr;
   return {
@@ -751,7 +766,7 @@ export function computeGenerico(project) {
       Bmax = Math.max(Bmax, cyl ? +v.bx : dir === 'X' ? +v.by : +v.bx);
       Lmax = Math.max(Lmax, cyl ? +v.bx : dir === 'X' ? +v.bx : +v.by);
     }
-    const ctx0 = windCtx(project, W.KD.building);
+    const ctx0 = windCtx(project, W.KD.building, dir);
     const gust = W.gustFactor({ exposure: ctx0.exposure, h: top, B: Bmax, L: Lmax, n1, beta: +project.wind.beta || 0.02, V: ctx0.V, rigidMode: project.wind.rigidMode });
     const G = gust.G;
     for (const v of vols) {
@@ -759,7 +774,7 @@ export function computeGenerico(project) {
       const open = v.tipo === 'abierto';
       const bperp = cyl ? +v.bx : dir === 'X' ? +v.by : +v.bx;
       const Kd = open ? W.KD.lattice : cyl ? W.KD.chimneyRound : W.KD.chimneySquare;
-      const ctx = windCtx(project, Kd);
+      const ctx = windCtx(project, Kd, dir);
       const dz = +v.h / nS;
       for (let k = 0; k < nS; k++) {
         const z0 = +v.z0 + k * dz;
@@ -778,7 +793,8 @@ export function computeGenerico(project) {
           fig = 'Fig. 6-21';
         }
         const Af = (open ? +v.eps : 1) * bperp * dz;
-        rows.push({ vol: v.name, z0, z1, zc: (z0 + z1) / 2, Kz: W.Kz((z0 + z1) / 2, ctx.exposure), qz: q, Kd, Cf, fig, Af, F: q * G * Cf * Af });
+        // p: presión equivalente sobre el área bruta de la cara (kPa); F = p · b · Δz
+        rows.push({ vol: v.name, z0, z1, zc: (z0 + z1) / 2, Kz: W.Kz((z0 + z1) / 2, ctx.exposure), qz: q, Kd, Cf, fig, Af, b: bperp, p: q * G * Cf * (open ? +v.eps : 1), F: q * G * Cf * Af });
       }
       const rg = rgs.get(v);
       const Ar = roofProjectedArea(v, rg, dir) * (open ? +v.eps : 1);
@@ -798,12 +814,23 @@ export function computeGenerico(project) {
     }
     const Vbase = sum(rows, (x) => x.F) + sum(cols, (x) => x.F);
     const Mbase = sum(rows, (x) => x.F * x.zc) + sum(cols, (x) => x.F * x.z);
+    const perVol = vols.map((v) => {
+      const rr = rows.filter((x) => x.vol === v.name);
+      const wall = rr.filter((x) => !x.roof);
+      const F = sum(rr, (x) => x.F);
+      return {
+        vol: v.name, F, z: F > 0 ? sum(rr, (x) => x.F * x.zc) / F : 0,
+        pMin: Math.min(...wall.map((x) => x.p)), pMax: Math.max(...wall.map((x) => x.p)),
+        qMin: Math.min(...wall.map((x) => x.qz)), qMax: Math.max(...wall.map((x) => x.qz)),
+        Cf: wall[0] ? wall[0].Cf : 0, b: wall[0] ? wall[0].b : 0, Froof: sum(rr.filter((x) => x.roof), (x) => x.F),
+      };
+    });
     const Aproj = sum(rows, (x) => x.Af) + sum(cols, (x) => x.Af);
     const Vmin = W.MIN_WIND_PRESSURE * Aproj;
     if (Vbase < Vmin) warnings.push(`Viento ${dir}: el cortante (${Vbase.toFixed(1)} kN) es menor que la carga mínima de 0.48 kPa sobre el área proyectada (${Vmin.toFixed(1)} kN, §6.1.4.1).`);
     const roofs = vols.filter((v) => v.tipo !== 'abierto' && (rgs.get(v).type !== 'plano' || v.shape !== 'cyl'))
       .map((v) => ({ vol: v.name, type: rgs.get(v).type, ...roofPressures(v, rgs.get(v), dir, ctx0, G, W.GCPI[project.wind.enclosure]) }));
-    wind.directions[dir] = { ctx: ctx0, gust, G, rows, cols, Vbase, Mbase, Vmin, roofs };
+    wind.directions[dir] = { ctx: ctx0, gust, G, rows, cols, Vbase, Mbase, Vmin, roofs, perVol };
   }
   wind.ctx = wind.directions.X.ctx;
   if (vols.some((v) => v.shape !== 'cyl' && v.tipo !== 'abierto' && Math.abs(+v.bx / +v.by - 1) > 0.25)) {

@@ -26,12 +26,23 @@ Disposiciones propias del REP-2021 incluidas:
 - **TL = 10 s** (§5.13).
 - Ss y S1 de los **mapas de aceleraciones espectrales** (§5.12).
 
+## Entorno de exposición en el visor
+
+La casilla **Entorno** dibuja un esquema de la categoría de exposición alrededor de la
+estructura: B con edificaciones y arbolado denso, C con terreno abierto y obstáculos
+dispersos, y D con agua a barlovento. A barlovento se dibuja el perfil de velocidad del
+viento (flechas proporcionales a √Kz, con α y zg de la Tabla 6-2), orientado según el caso
+de carga activo. Con topografía activa se agrega un segundo perfil sobre el relieve,
+proporcional a √(Kz·Kzt).
+
 ## Topografía en el visor
 
 Con el efecto topográfico activado (Viento → Kzt), el visor dibuja el relieve de la
 Fig. 6-4 (cresta 2D, escarpe/acantilado 2D o colina 3D) con H, Lh y la distancia x
 a la cresta, coloca la estructura sobre el terreno y muestra Kzt en la base y en la
-cima. El botón **Sitio** encuadra todo el relieve.
+cima. El botón **Sitio** encuadra todo el relieve. La cresta de un relieve 2D es
+perpendicular a la dirección X: Kzt se aplica al viento en X y vale 1 para el viento en Y
+(paralelo a la cresta); la colina 3D aplica en ambas direcciones.
 
 ## Mapas Ss y S1
 
@@ -59,13 +70,13 @@ Precisión, medida con validación cruzada sobre las propias etiquetas de los ma
 
 ## Descarga (Windows)
 
-**[ForceCalculation-REP2021-Setup-1.1.0.exe](https://github.com/adrianguerra199510-jpg/FORCE-CALCULATION/raw/claude/nifty-einstein-5vo4up/instalador/ForceCalculation-REP2021-Setup-1.1.0.exe)** (93 MB, Windows 10/11 de 64 bits)
+**[ForceCalculation-REP2021-Setup-1.2.0.exe](https://github.com/adrianguerra199510-jpg/FORCE-CALCULATION/raw/claude/nifty-einstein-5vo4up/instalador/ForceCalculation-REP2021-Setup-1.2.0.exe)** (93 MB, Windows 10/11 de 64 bits)
 
 1. Descarga y ejecuta el instalador. Permite elegir la carpeta y crea accesos directos en el escritorio y en el menú Inicio.
 2. El instalador no está firmado digitalmente. Windows SmartScreen mostrará "Windows protegió su PC": haz clic en **Más información → Ejecutar de todas formas**.
 3. Los proyectos se guardan como `.fcp`; el instalador asocia esa extensión con la app.
 
-SHA-256: `348b3b8e7643a68f5bc35efabd28159dd5ad789e27d46605def62879aeb71209`
+SHA-256: `27d37aec04b2e47287017481f1b6b57183011c28fc7f6c99559f65ce1c0339c5`
 
 ## Instalación y uso (desde el código)
 
@@ -85,7 +96,7 @@ Generar el instalador de Windows (desde Windows):
 npm run dist
 ```
 
-El instalador queda en `dist/ForceCalculation-REP2021-Setup-1.1.0.exe`.
+El instalador queda en `dist/ForceCalculation-REP2021-Setup-1.2.0.exe`.
 
 Flujo de trabajo:
 

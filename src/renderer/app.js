@@ -52,6 +52,7 @@ function bindUi() {
     viewer.showLabels = e.target.checked;
     applyLoadCase();
   });
+  $('#optEnv').addEventListener('change', () => applyTerrain());
   $('#optInternal').addEventListener('change', applyLoadCase);
   $('#optRoof').addEventListener('change', applyLoadCase);
   window.api.onMenu((ch) => ({ new: newProject, open: openProject, save: () => saveProject(false), saveAs: () => saveProject(true), docx: () => exportReport('docx'), pdf: () => exportReport('pdf') }[ch]?.()));
@@ -197,6 +198,7 @@ function applyTerrain() {
   const exp = state.project.wind.exposure;
   viewer.setTerrain(t, { kztBase: Kzt(0, exp, t), kztTop: Kzt(H, exp, t) });
   $('#btnSite').hidden = !(t.enabled && +t.H > 0 && +t.Lh > 0);
+  viewer.setEnvironment({ show: $('#optEnv').checked, exposure: exp, topoActive: t.enabled && +t.H > 0 && +t.Lh > 0 ? t : null });
 }
 
 function renderWindV() {
@@ -228,8 +230,27 @@ function renderLoadCases() {
   $('#naveOpts').hidden = !(state.res.typology === 'nave' && state.loadCase.startsWith('w'));
 }
 
+/** Dirección del viento del caso de carga activo en coordenadas del visor (X, o Z para la "Y" del modelo). */
+function windDirFor(r, lc) {
+  const t = state.project.wind.topo;
+  const parallel2D = t.enabled && t.type !== 'hill3D';
+  switch (r.typology) {
+    case 'edificio':
+    case 'generico':
+      return lc === 'wy' ? { axis: 'Z', sign: -1, kztApplies: !parallel2D } : lc === 'wx' ? { axis: 'X', sign: 1, kztApplies: true } : null;
+    case 'nave':
+      return lc === 'wl' ? { axis: 'Z', sign: 1, kztApplies: !parallel2D } : lc === 'wt' ? { axis: 'X', sign: 1, kztApplies: true } : null;
+    case 'valla':
+      return { axis: 'Z', sign: -1, kztApplies: true };
+    default:
+      return { axis: 'X', sign: 1, kztApplies: true };
+  }
+}
+
 function applyLoadCase() {
   if (!state.res) return;
+  const wd = windDirFor(state.res, state.loadCase);
+  if (wd) viewer.setWindDir(wd);
   viewer.setLoadCase(state.loadCase, { internal: $('#optInternal').value, roofCase: $('#optRoof').value });
   const r = state.res;
   const lc = state.loadCase;
@@ -573,6 +594,21 @@ async function selfTest() {
   mapView.view = { z: 1, px: 0, py: 0 };
   showTab('modelo');
 
+  // escenas de exposición B, C y D
+  state.project.typology = 'edificio';
+  for (const ex of ['B', 'C', 'D']) {
+    state.project.wind.exposure = ex;
+    state.project.meta.nombre = `Prueba exposición ${ex}`;
+    renderAllForms();
+    doCompute(true);
+    state.loadCase = 'wx';
+    renderLoadCases();
+    applyLoadCase();
+    await wait(500);
+    await window.api.selftest.capture(`exposicion-${ex}`);
+  }
+  state.project.wind.exposure = 'C';
+
   // escenarios topográficos
   const topoCases = [
     ['edificio', { enabled: true, type: 'escarp2D', H: 35, Lh: 30, x: 15 }, 'acantilado'],
@@ -592,6 +628,15 @@ async function selfTest() {
     viewer.setView('site');
     await wait(500);
     await window.api.selftest.capture(`topo-${name}-sitio`);
+    const wy = loadCaseList(state.res).find((c) => c[0] === 'wy');
+    if (wy) {
+      viewer.resetCamera();
+      state.loadCase = 'wy';
+      renderLoadCases();
+      applyLoadCase();
+      await wait(500);
+      await window.api.selftest.capture(`topo-${name}-wy`);
+    }
     await log(`topo ${name}: Kzt base=${f(Kzt(0, 'C', topo), 3)} Vviento=${f(r0(state.res), 1)}`);
     if (name === 'acantilado') await exportReport('pdf');
   }

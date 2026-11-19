@@ -1,7 +1,7 @@
 // Visor 3D (Three.js). Convención: X y Z en planta, Y vertical.
 import * as THREE from 'three';
 import { OrbitControls } from './vendor/OrbitControls.js';
-import { terrainElevation } from '../calc/wind.js';
+import { terrainElevation, Kz as KzFn, Kzt as KztFn, EXPOSURE } from '../calc/wind.js';
 
 const COL = {
   member: 0x2b3a44,
@@ -34,7 +34,12 @@ export class Viewer {
     this.root = new THREE.Group(); // estructura + cargas (se traslada sobre el terreno)
     this.root.add(this.model, this.loads);
     this.terrain = new THREE.Group();
-    this.scene.add(this.root, this.terrain);
+    this.env = new THREE.Group(); // entorno de exposición y perfiles de viento (coordenadas del mundo)
+    this.scene.add(this.root, this.terrain, this.env);
+    this.terrainRot = 0;
+    this.topo = null;
+    this.envOpts = { show: true, exposure: 'C' };
+    this.windDir = { axis: 'X', sign: 1, kztApplies: true };
     this.worldOffset = [0, 0, 0];
     this.labelScale = 1;
     this.showLabels = true;
@@ -137,9 +142,24 @@ export class Viewer {
     }
   }
 
+
+  thinArrow(tail, dir, len, color) {
+    const r = (this.arrowRef || this.size * 0.45) * 0.005;
+    const headL = Math.min(len * 0.35, (this.arrowRef || this.size) * 0.05);
+    const mat = new THREE.MeshBasicMaterial({ color });
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(r, r, Math.max(len - headL, 0.01), 6), mat);
+    const head = new THREE.Mesh(new THREE.ConeGeometry(r * 3, headL, 8), mat);
+    shaft.quaternion.copy(q);
+    head.quaternion.copy(q);
+    shaft.position.copy(tail).add(dir.clone().multiplyScalar((len - headL) / 2));
+    head.position.copy(tail).add(dir.clone().multiplyScalar(len - headL / 2));
+    this.loads.add(shaft, head);
+  }
+
   fit(size, center) {
     const c = new THREE.Vector3(...center).add(new THREE.Vector3(...this.worldOffset));
-    const r = size;
+    const r = size * (this.envOpts && this.envOpts.show ? 1.3 : 1);
     this.camera.position.set(c.x - r * 1.55, c.y + r * 0.95, c.z + r * 1.8);
     this.controls.target.copy(c);
     this.camera.near = r / 100;
@@ -590,27 +610,76 @@ export class Viewer {
     } else if (res.typology === 'generico') {
       const vols = res.geometry.volumes;
       const byName = Object.fromEntries(vols.map((v) => [v.name, v]));
-      let items;
-      let color;
       if (lc === 'wx' || lc === 'wy') {
-        const d = res.wind.directions[lc === 'wx' ? 'X' : 'Y'];
-        items = [...d.rows.map((r) => ({ v: byName[r.vol], z: r.zc, F: r.F })), ...d.cols.map((c) => ({ v: byName[c.vol], z: c.z, F: c.F, label: `Columnas: ${fmt(c.F)}` }))];
-        color = COL.wind;
+        // viento como presión repartida sobre la cara de barlovento + una resultante por volumen
+        const isX = lc === 'wx';
+        const d = res.wind.directions[isX ? 'X' : 'Y'];
+        const dirv = isX ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, -1);
+        const across = isX ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
+        const wall = d.rows.filter((r) => !r.roof);
+        const pmax = Math.max(...wall.map((r) => r.p), 1e-9);
+        const Fmax = Math.max(...d.perVol.map((x) => x.F), ...d.cols.map((c) => c.F), 1e-9);
+        const ramp = (p) => new THREE.Color(0xdfeaf7).lerp(new THREE.Color(COL.wind), 0.25 + 0.75 * Math.min(1, p / pmax));
+        const faceOf = (v) => {
+          // punto central de la cara de barlovento (plano normal al viento)
+          const half = isX ? v.bx / 2 : (v.shape === 'cyl' ? v.bx : v.by) / 2;
+          return new THREE.Vector3(v.x, 0, v.y).add(dirv.clone().multiplyScalar(-(half + 0.06)));
+        };
+        for (const v of vols) {
+          const rr = wall.filter((r) => r.vol === v.name);
+          if (!rr.length) continue;
+          const f0 = faceOf(v);
+          const b = rr[0].b;
+          // lámina de presión: una banda por franja, coloreada por p (kPa)
+          for (const r of rr) {
+            const pts = [
+              f0.clone().add(across.clone().multiplyScalar(-b / 2)).setY(r.z0),
+              f0.clone().add(across.clone().multiplyScalar(b / 2)).setY(r.z0),
+              f0.clone().add(across.clone().multiplyScalar(b / 2)).setY(r.z1),
+              f0.clone().add(across.clone().multiplyScalar(-b / 2)).setY(r.z1),
+            ];
+            const geo = new THREE.BufferGeometry().setFromPoints([pts[0], pts[1], pts[2], pts[0], pts[2], pts[3]]);
+            this.loads.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: ramp(r.p), transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false })));
+            // campo de flechas pequeñas: la carga actúa en toda la superficie
+            const nCol = Math.max(2, Math.min(5, Math.round(b / Math.max(1, (r.z1 - r.z0)))));
+            for (let k = 0; k < nCol; k++) {
+              const off = -b / 2 + (b * (k + 0.5)) / nCol;
+              const len = L * 0.22 * (r.p / pmax) + L * 0.03;
+              const tip = f0.clone().add(across.clone().multiplyScalar(off)).setY(r.zc);
+              const tail = tip.clone().add(dirv.clone().multiplyScalar(-len));
+              this.thinArrow(tail, dirv, len, COL.wind);
+            }
+          }
+          // etiquetas de presión en la franja inferior y superior
+          const lo = rr[0];
+          const hi = rr[rr.length - 1];
+          if (this.showLabels) {
+            this.loads.add(this.label(`${lo.p.toFixed(2)} kPa`, f0.clone().add(across.clone().multiplyScalar(-b / 2 - 0.2)).setY(lo.zc).toArray(), '#1C2A33', 'rgba(255,255,255,0.9)'));
+            if (hi !== lo) this.loads.add(this.label(`${hi.p.toFixed(2)} kPa`, f0.clone().add(across.clone().multiplyScalar(-b / 2 - 0.2)).setY(hi.zc).toArray(), '#1C2A33', 'rgba(255,255,255,0.9)'));
+          }
+          // resultante del volumen
+          const pv = d.perVol.find((x) => x.vol === v.name);
+          const len = Math.max((L * 0.9 * pv.F) / Fmax, L * 0.15);
+          const tip = f0.clone().add(across.clone().multiplyScalar(b / 2 + 0.6)).setY(pv.z);
+          this.arrow(tip.clone().add(dirv.clone().multiplyScalar(-len)).toArray(), dirv.toArray(), len, COL.wind, `${v.name}: F = ${fmt(pv.F)}`);
+        }
+        for (const c of d.cols) {
+          const v = byName[c.vol];
+          const f0 = faceOf(v);
+          const len = Math.max((L * 0.9 * c.F) / Fmax, L * 0.12);
+          const tip = f0.clone().setY(c.z);
+          this.arrow(tip.clone().add(dirv.clone().multiplyScalar(-len)).toArray(), dirv.toArray(), len, COL.wind, `Columnas: ${fmt(c.F)}`);
+        }
       } else {
-        items = res.seismic.directions.X.levels.map((l) => ({ v: byName[l.vol], z: l.h, F: l.F }));
-        color = COL.quake;
-      }
-      const Fmax = Math.max(...items.map((i) => i.F), 1e-9);
-      const lab = this.labelSet(items.map((i) => i.F));
-      items.forEach((it, i) => { if (!it.label && !lab.has(i)) it.label = ''; });
-      for (const it of items) {
-        const len = Math.max((L * it.F) / Fmax, L * 0.08);
-        const v = it.v || vols[0];
-        // la punta toca la cara de barlovento de su propio volumen
-        const faceX = v.x - v.bx / 2;
-        const faceZ = v.y + (v.shape === 'cyl' ? v.bx : v.by) / 2;
-        if (lc === 'wy') this.arrow([v.x, it.z, faceZ + len + 0.3], [0, 0, -1], len, color, it.label === '' ? null : it.label || fmt(it.F));
-        else this.arrow([faceX - len - 0.3, it.z, v.y], [1, 0, 0], len, color, it.label === '' ? null : it.label || fmt(it.F));
+        const items = res.seismic.directions.X.levels.map((l) => ({ v: byName[l.vol], z: l.h, F: l.F }));
+        const Fmax = Math.max(...items.map((i) => i.F), 1e-9);
+        const lab = this.labelSet(items.map((i) => i.F));
+        items.forEach((it, i) => {
+          const len = Math.max((L * it.F) / Fmax, L * 0.08);
+          const v = it.v || vols[0];
+          const faceX = v.x - v.bx / 2;
+          this.arrow([faceX - len - 0.3, it.z, v.y], [1, 0, 0], len, COL.quake, lab.has(i) ? fmt(it.F) : null);
+        });
       }
     } else if (res.typology === 'valla') {
       const g = res.geometry;
@@ -748,6 +817,9 @@ export class Viewer {
     const enabled = topo && topo.enabled && +topo.H > 0 && +topo.Lh > 0;
     this.model.traverse((o) => { if (o.userData.isGround) o.visible = !enabled; });
     if (!enabled) {
+      this.topo = null;
+      this.terrainRot = 0;
+      this.terrain.rotation.y = 0;
       this.worldOffset = [0, 0, 0];
       this.root.position.set(0, 0, 0);
       this.siteBox = null;
@@ -757,6 +829,10 @@ export class Viewer {
     const Lh = +topo.Lh;
     const xs = +topo.x || 0;
     const t = { type: topo.type, H, Lh };
+    // la cresta se orienta perpendicular a la dirección de viento con la que se calcula Kzt
+    this.terrainRot = this.res && this.res.typology === 'valla' ? Math.PI / 2 : 0;
+    this.terrain.rotation.y = this.terrainRot;
+    this.topo = t;
     const ex = Math.max(3 * Lh, Math.abs(xs) + 3 * this.size, 4 * H);
     const x0 = Math.min(-ex, xs - 3 * this.size);
     const x1 = Math.max(topo.type === 'escarp2D' ? Math.max(Lh, 3 * this.size + xs) : ex, xs + 3 * this.size);
@@ -810,30 +886,181 @@ export class Viewer {
     const lab = (txt, p, bg = 'rgba(255,255,255,0.9)', color = '#1C2A33') => this.terrain.add(this.label(txt, p, color, bg));
     lab(`Cresta (x = 0) · H = ${H.toFixed(1)} m`, [0, H + H * 0.12, -zw * 0.6]);
     lab(`Lh = ${Lh.toFixed(1)} m (cota H/2)`, [-Lh, H * 0.5 + H * 0.1, -zw * 0.6]);
-    // viento
-    const wy = H + this.size * 0.4;
-    const wl = Math.min(Lh, ex * 0.4);
-    const d = new THREE.Vector3(1, 0, 0);
-    const o = new THREE.Vector3(x0 + ex * 0.15, wy, -zw * 0.3);
-    const r = Math.max(0.15, this.size * 0.012);
-    const mat = new THREE.MeshStandardMaterial({ color: COL.wind });
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(r, r, wl, 10), mat);
-    shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
-    shaft.position.copy(o).add(d.clone().multiplyScalar(wl / 2));
-    const head = new THREE.Mesh(new THREE.ConeGeometry(r * 3, r * 8, 14), mat);
-    head.quaternion.copy(shaft.quaternion);
-    head.position.copy(o).add(d.clone().multiplyScalar(wl + r * 4));
-    this.terrain.add(shaft, head);
-    lab('Viento', o.toArray(), '#1F5FA8', '#ffffff');
     // colocar la estructura
     const [cx, , cz] = this.center;
     const ground = terrainElevation(t, xs, 0);
-    this.worldOffset = [xs - cx, ground, -cz];
+    const [wx, wz] = this.toWorld(xs, 0);
+    this.worldOffset = [wx - cx, ground, wz - cz];
     this.root.position.set(...this.worldOffset);
     if (info.kztBase != null) {
       lab(`Kzt = ${info.kztBase.toFixed(2)} (base) · ${info.kztTop.toFixed(2)} (cima)`, [xs, ground + this.center[1] * 2 + this.size * 0.25, 0], '#F2E330');
     }
     this.siteBox = { x0, x1, zw, H };
+  }
+
+
+  // ------------------------------------------------------------- entorno de exposición y perfiles de viento
+  toWorld(lx, lz) {
+    const c = Math.cos(this.terrainRot);
+    const s = Math.sin(this.terrainRot);
+    return [lx * c + lz * s, -lx * s + lz * c];
+  }
+  toLocal(wx, wz) {
+    const c = Math.cos(this.terrainRot);
+    const s = Math.sin(this.terrainRot);
+    return [wx * c - wz * s, wx * s + wz * c];
+  }
+  groundAt(wx, wz) {
+    if (!this.topo) return 0;
+    const [lx, lz] = this.toLocal(wx, wz);
+    return terrainElevation(this.topo, lx, lz);
+  }
+
+  /** opts: { show, exposure, topoActive } */
+  setEnvironment(opts) {
+    this.envOpts = { ...this.envOpts, ...opts };
+    this.buildEnvironment();
+  }
+
+  /** dir: { axis: 'X'|'Z', sign: ±1, kztApplies } */
+  setWindDir(dir) {
+    const d = { ...this.windDir, ...dir };
+    const changed = d.axis !== this.windDir.axis || d.sign !== this.windDir.sign || d.kztApplies !== this.windDir.kztApplies;
+    this.windDir = d;
+    if (changed) this.buildEnvironment();
+  }
+
+  buildEnvironment() {
+    this.clear(this.env);
+    if (!this.res || !this.envOpts.show) return;
+    const exp = this.envOpts.exposure;
+    const C = new THREE.Vector3(...this.center).add(new THREE.Vector3(...this.worldOffset));
+    const box = new THREE.Box3();
+    this.model.traverse((o) => { if ((o.isMesh || o.isLineSegments) && !o.userData.isGround) box.expandByObject(o); });
+    const sz = box.isEmpty() ? new THREE.Vector3(10, 10, 10) : box.getSize(new THREE.Vector3());
+    const r0 = Math.hypot(sz.x, sz.z) / 2 + 6;
+    const R = Math.min(400, Math.max(45, r0 * 3.2, this.size * 2.2));
+    const dir = this.windDir.axis === 'X' ? new THREE.Vector3(this.windDir.sign, 0, 0) : new THREE.Vector3(0, 0, this.windDir.sign);
+    const side = new THREE.Vector3(-dir.z, 0, dir.x);
+    let seed = 12345;
+    const rnd = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 4294967296;
+    };
+
+    // ---- suelo y agua
+    if (!this.topo) {
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(R, 64), new THREE.MeshStandardMaterial({ color: { B: 0xd8d4cb, C: 0xcfe0b9, D: 0xe8dfc3 }[exp], roughness: 1 }));
+      disc.rotation.x = -Math.PI / 2;
+      disc.position.set(C.x, -0.03, C.z);
+      this.env.add(disc);
+    }
+    const inWater = (x, z) => exp === 'D' && new THREE.Vector3(x - C.x, 0, z - C.z).dot(dir) < -r0;
+    if (exp === 'D') {
+      const len = R * 1.1;
+      const water = new THREE.Mesh(new THREE.PlaneGeometry(2 * R, len), new THREE.MeshStandardMaterial({ color: 0x5f9fcf, transparent: true, opacity: 0.85, roughness: 0.3 }));
+      water.rotation.x = -Math.PI / 2;
+      if (this.windDir.axis === 'X') water.rotation.z = Math.PI / 2;
+      const c = C.clone().add(dir.clone().multiplyScalar(-(r0 + len / 2)));
+      water.position.set(c.x, (this.topo ? 0 : 0) + 0.02, c.z);
+      this.env.add(water);
+    }
+
+    // ---- obstáculos (edificaciones y árboles) según la exposición
+    const nObj = { B: 190, C: 26, D: 6 }[exp];
+    const houses = [];
+    const trees = [];
+    for (let i = 0; i < nObj * 4 && houses.length + trees.length < nObj; i++) {
+      const a = rnd() * Math.PI * 2;
+      const rr = r0 + (R - r0) * Math.sqrt(rnd());
+      const x = C.x + rr * Math.cos(a);
+      const z = C.z + rr * Math.sin(a);
+      if (inWater(x, z)) continue;
+      // no tapar la vista: se excluye el sector hacia la cámara isométrica (-X, +Z)
+      const cam = new THREE.Vector3(-0.66, 0, 0.75);
+      const rel = new THREE.Vector3(x - C.x, 0, z - C.z);
+      if (rel.clone().normalize().dot(cam) > 0.55 && rr < R * 0.95) continue;
+      const g = this.groundAt(x, z);
+      if (this.topo) {
+        const slope = Math.abs(this.groundAt(x + 1, z) - this.groundAt(x - 1, z)) + Math.abs(this.groundAt(x, z + 1) - this.groundAt(x, z - 1));
+        if (slope > 1.2) continue; // no se colocan sobre el acantilado
+      }
+      const isTree = exp === 'D' ? true : rnd() < (exp === 'B' ? 0.35 : 0.6);
+      if (isTree) trees.push({ x, z, g, h: 4 + rnd() * 6 });
+      else houses.push({ x, z, g, w: exp === 'B' ? 6 + rnd() * 8 : 5 + rnd() * 4, d: exp === 'B' ? 6 + rnd() * 8 : 5 + rnd() * 4, h: exp === 'B' ? (rnd() < 0.12 && rr > r0 * 1.8 ? 14 + rnd() * 10 : 5 + rnd() * 8) : 3.5 + rnd() * 2.5, rot: rnd() * Math.PI });
+    }
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    if (houses.length) {
+      const im = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ roughness: 0.9 }), houses.length);
+      houses.forEach((h, i) => {
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), h.rot);
+        m4.compose(new THREE.Vector3(h.x, h.g + h.h / 2, h.z), q, new THREE.Vector3(h.w, h.h, h.d));
+        im.setMatrixAt(i, m4);
+        im.setColorAt(i, new THREE.Color().setHSL(0.08, 0.12, 0.62 + rnd() * 0.18));
+      });
+      this.env.add(im);
+    }
+    if (trees.length) {
+      const crown = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 8), new THREE.MeshStandardMaterial({ color: 0x5f8f4e, roughness: 1 }), trees.length);
+      const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.15, 0.2, 1, 6), new THREE.MeshStandardMaterial({ color: 0x7a5c3e }), trees.length);
+      trees.forEach((t, i) => {
+        m4.compose(new THREE.Vector3(t.x, t.g + t.h * 0.6, t.z), new THREE.Quaternion(), new THREE.Vector3(t.h * 0.32, t.h * 0.8, t.h * 0.32));
+        crown.setMatrixAt(i, m4);
+        m4.compose(new THREE.Vector3(t.x, t.g + t.h * 0.12, t.z), new THREE.Quaternion(), new THREE.Vector3(1, t.h * 0.25, 1));
+        trunk.setMatrixAt(i, m4);
+      });
+      this.env.add(crown, trunk);
+    }
+
+    // ---- perfiles de velocidad del viento
+    const e = EXPOSURE[exp];
+    const zTop = Math.max(sz.y * 1.1, 10);
+    const n = 8;
+    const zs = Array.from({ length: n }, (_, i) => (zTop * (i + 0.6)) / n);
+    const vUp = zs.map((z) => Math.sqrt(KzFn(z, exp)));
+    const topoOn = this.topo && this.envOpts.topoActive;
+    const applies = topoOn && this.windDir.kztApplies;
+    const vTop = applies ? zs.map((z) => Math.sqrt(KzFn(z, exp) * KztFn(z, exp, this.envOpts.topoActive))) : null;
+    const vmax = Math.max(...vUp, ...(vTop || [0]));
+    const Lp = Math.max(this.size * 0.42, 8);
+    const rad = Math.max(0.08, Lp * 0.012);
+    const drawProfile = (base, vals, color, label) => {
+      const g0 = this.groundAt(base.x, base.z);
+      const tips = [];
+      zs.forEach((z, i) => {
+        const len = (Lp * vals[i]) / vmax;
+        const tail = new THREE.Vector3(base.x, g0 + z, base.z).add(dir.clone().multiplyScalar(-Lp));
+        const mat = new THREE.MeshStandardMaterial({ color });
+        const headL = Math.min(len * 0.3, Lp * 0.12);
+        const shaft = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, Math.max(len - headL, 0.01), 8), mat);
+        const head = new THREE.Mesh(new THREE.ConeGeometry(rad * 3, headL, 12), mat);
+        const qq = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+        shaft.quaternion.copy(qq);
+        head.quaternion.copy(qq);
+        shaft.position.copy(tail).add(dir.clone().multiplyScalar((len - headL) / 2));
+        head.position.copy(tail).add(dir.clone().multiplyScalar(len - headL / 2));
+        this.env.add(shaft, head);
+        tips.push(tail.clone().add(dir.clone().multiplyScalar(len)));
+      });
+      // línea de referencia vertical (colas) y envolvente (puntas)
+      const tailTop = new THREE.Vector3(base.x, g0 + zTop, base.z).add(dir.clone().multiplyScalar(-Lp));
+      const tailBot = new THREE.Vector3(base.x, g0, base.z).add(dir.clone().multiplyScalar(-Lp));
+      this.env.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([tailBot, tailTop]), new THREE.LineBasicMaterial({ color: 0x5b6b73 })));
+      this.env.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([tailBot.clone().add(dir.clone().multiplyScalar(0.01)), ...tips]), new THREE.LineBasicMaterial({ color })));
+      const lp = tailTop.clone().add(new THREE.Vector3(0, zTop * 0.08 + 1, 0));
+      this.env.add(this.label(label, lp.toArray(), '#ffffff', '#' + new THREE.Color(color).getHexString()));
+    };
+    const expTxt = { B: 'B – urbana / suburbana', C: 'C – terreno abierto', D: 'D – costa / agua' }[exp];
+    const upBase = C.clone().add(dir.clone().multiplyScalar(-(r0 + Lp * 0.2)));
+    drawProfile(upBase, vUp, 0x1f5fa8, `Viento · Exposición ${expTxt} · α = ${e.alpha}, zg = ${e.zg.toFixed(0)} m · V ∝ √Kz`);
+    if (applies) {
+      const b2 = C.clone().add(side.clone().multiplyScalar(r0 * 0.9)).add(dir.clone().multiplyScalar(-r0 * 0.2));
+      const k0 = KztFn(0, exp, this.envOpts.topoActive);
+      drawProfile(b2, vTop, 0x0e8a9a, `Sobre el relieve · V ∝ √(Kz·Kzt) · Kzt(base) = ${k0.toFixed(2)}`);
+    } else if (topoOn) {
+      this.env.add(this.label('Viento paralelo a la cresta: Kzt = 1.00', [C.x, this.groundAt(C.x, C.z) + zTop * 1.25, C.z], '#1C2A33', '#F2E330'));
+    }
   }
 
   fitSite() {

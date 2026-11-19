@@ -133,7 +133,7 @@ export function buildReportModel(project, res, images) {
     ['Factor de importancia I', f(ctx.I, 2), 'Tabla 6-1'],
     ['Categoría de exposición', ctx.exposure, '§6.5.6.3'],
     ['α / zg', `${ex.alpha} / ${f(ex.zg, 1)} m`, 'Tabla 6-2'],
-    ['Efecto topográfico', project.wind.topo.enabled ? `Sí (${TOPO_TYPES[project.wind.topo.type]}, H = ${project.wind.topo.H} m, Lh = ${project.wind.topo.Lh} m, x = ${project.wind.topo.x} m)` : 'No (Kzt = 1.0)', '§6.5.7'],
+    ['Efecto topográfico', project.wind.topo.enabled ? `Sí (${TOPO_TYPES[project.wind.topo.type]}, H = ${project.wind.topo.H} m, Lh = ${project.wind.topo.Lh} m, x = ${project.wind.topo.x} m)${project.wind.topo.type !== 'hill3D' ? (res.typology === 'valla' ? '; cresta perpendicular al viento sobre el anuncio' : (['edificio', 'nave', 'generico'].includes(res.typology) ? '; Kzt sólo con viento perpendicular a la cresta (X); con viento en Y, paralelo a la cresta, Kzt = 1' : '; cresta perpendicular al viento')) : ''}` : 'No (Kzt = 1.0)', '§6.5.7'],
     ['Cerramiento / GCpi', `${ENCL[project.wind.enclosure]} / ±${f(GCPI[project.wind.enclosure], 2)}`, 'Fig. 6-5'],
   ]);
   eq('qz = 0.613·Kz·Kzt·Kd·V²·I  (N/m², V en m/s) – Ec. 6-15');
@@ -295,6 +295,9 @@ function windSection(res, project, { h2, h3, kv, table, eq, para, note }) {
     for (const [dir, d] of Object.entries(res.wind.directions)) {
       h2(`Viento en dirección ${dir}`);
       kv([...gustRows(d.gust), ['Cortante basal', `${f(d.Vbase, 1)} kN`], ['Momento de volteo', `${f(d.Mbase, 1)} kN·m`], ['Carga mínima 0.48 kPa·A proyectada', `${f(d.Vmin, 1)} kN`, '§6.1.4.1']]);
+      table(`Resumen por volumen – dirección ${dir}`, ['Volumen', 'Cf', 'Ancho expuesto (m)', 'q̄z (kPa) base–cima', 'p = q̄z·G·Cf (kPa) base–cima', 'F resultante (kN)', 'z de la resultante (m)', 'F del techo (kN)'],
+        d.perVol.map((x) => [x.vol, f(x.Cf, 3), f(x.b, 2), `${f(x.qMin, 3)} – ${f(x.qMax, 3)}`, `${f(x.pMin, 3)} – ${f(x.pMax, 3)}`, f(x.F, 2), f(x.z, 2), f(x.Froof, 2)]));
+      para('La presión del viento actúa repartida sobre toda la cara expuesta. Como qz crece con la altura, la cara se divide en franjas horizontales y la presión de cada franja se integra; las fuerzas por franja de la tabla siguiente son esas resultantes parciales. La fuerza sobre un volumen depende de qz (mayor a más altura), pero también de su coeficiente de forma Cf (un cilindro tiene un Cf mucho menor que un prisma) y de su ancho expuesto.');
       table(`Fuerzas de viento por franja – dirección ${dir}`, ['Volumen', 'z (m)', 'Kz', 'q̄z (kPa)', 'Kd', 'Cf', 'Af (m²)', 'F (kN)'],
         [...d.rows].reverse().map((r) => [r.vol, `${f(r.z0, 2)}–${f(r.z1, 2)}`, f(r.Kz, 3), f(r.qz, 4), f(r.Kd, 2), `${f(r.Cf, 3)} (${r.fig})`, f(r.Af, 2), f(r.F, 2)]));
       for (const rf of d.roofs || []) {
