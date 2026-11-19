@@ -1,8 +1,8 @@
 // Aplicación de viento y sismo por tipología estructural.
-import * as W from './wind.mjs';
-import * as S from './seismic.mjs';
-import { REP } from './rep.mjs';
-import { findSystem, systemWarnings } from './systems.mjs';
+import * as W from './wind.js';
+import * as S from './seismic.js';
+import { REP } from './rep.js';
+import { findSystem, systemWarnings } from './systems.js';
 
 const G_ACC = 9.81;
 const GAMMA_W = 9.81; // kN/m³

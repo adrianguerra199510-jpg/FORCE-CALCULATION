@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import * as S from '../src/calc/seismic.mjs';
-import * as W from '../src/calc/wind.mjs';
-import { basicWindSpeed } from '../src/calc/rep.mjs';
-import { compute, defaultProject, rayleighPeriod } from '../src/calc/typologies.mjs';
+import * as S from '../src/calc/seismic.js';
+import * as W from '../src/calc/wind.js';
+import { basicWindSpeed } from '../src/calc/rep.js';
+import { compute, defaultProject, rayleighPeriod } from '../src/calc/typologies.js';
 
 const near = (a, b, tol = 1e-3) => assert.ok(Math.abs(a - b) <= tol, `${a} ≉ ${b} (tol ${tol})`);
 

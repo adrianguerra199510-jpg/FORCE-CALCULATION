@@ -1,7 +1,7 @@
 // Viento según REP-2021 Cap. 4 → ASCE/SEI 7-05 Cap. 6, Método 2 (procedimiento analítico).
 // Unidades SI: m, m/s, kPa (kN/m²), kN.
 
-import { REP, basicWindSpeed } from './rep.mjs';
+import { REP, basicWindSpeed } from './rep.js';
 
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const lerp = (x, x0, x1, y0, y1) => (x1 === x0 ? y0 : y0 + ((y1 - y0) * (x - x0)) / (x1 - x0));

@@ -1,7 +1,7 @@
 // Sismo según REP-2021 Cap. 5 → ASCE/SEI 7-05 Cap. 11, 12 y 15.
 // Unidades: SI (m, kN, s). Aceleraciones espectrales en g.
 
-import { REP } from './rep.mjs';
+import { REP } from './rep.js';
 
 const lerp = (x, x0, x1, y0, y1) => y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
 

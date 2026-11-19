@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { lookup, sheetsAt, pixelToLonLat } from '../src/calc/maplookup.mjs';
+import { lookup, sheetsAt, pixelToLonLat } from '../src/calc/maplookup.js';
 
 const grid = JSON.parse(readFileSync(new URL('../src/data/rep-maps/grid.json', import.meta.url)));
 

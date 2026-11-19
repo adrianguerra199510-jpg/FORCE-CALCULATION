@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'sha256-NfHJr+xcDJiAGqHYgFEaR5vX+0YDa2Tbke39iP8L6uY='; font-src 'self'">
+  <title>Force Calculation · REP-2021</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three.module.js" } }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><path d="M4 28h24" stroke="#1C2A33" stroke-width="2.5"/><path d="M9 28V10h14v18" fill="none" stroke="#1C2A33" stroke-width="2.5"/><path d="M2 14h6M2 19h6" stroke="#1F5FA8" stroke-width="2.5"/><path d="M24 22l5-3-5-3" fill="none" stroke="#C8102E" stroke-width="2.5"/></svg>
+      <div>
+        <div class="app-name">Force Calculation</div>
+        <div class="project-name" id="projectName">Proyecto nuevo</div>
+      </div>
+    </div>
+    <nav class="actions">
+      <button class="btn ghost" id="btnNew">Nuevo</button>
+      <button class="btn ghost" id="btnOpen">Abrir</button>
+      <button class="btn ghost" id="btnSave">Guardar</button>
+      <span class="sep"></span>
+      <button class="btn primary" id="btnDocx">Exportar Word</button>
+      <button class="btn primary" id="btnPdf">Exportar PDF</button>
+    </nav>
+  </header>
+
+  <div class="layout">
+    <aside class="inputs" aria-label="Datos de entrada">
+      <details open><summary>Proyecto</summary><div class="fields" id="secProyecto"></div></details>
+      <details open>
+        <summary>Sitio y parámetros sísmicos</summary>
+        <div class="site-source" id="siteSource"></div>
+        <div class="fields" id="secSitio"></div>
+        <button class="btn small wide" id="btnGoMap">Elegir ubicación en el mapa REP</button>
+      </details>
+      <details open><summary>Viento</summary><div class="wind-v" id="windV"></div><div class="fields" id="secViento"></div></details>
+      <details open><summary>Estructura</summary><div class="fields" id="secTipo"></div><div class="fields" id="secEstructura"></div>
+        <div id="appWrap"></div>
+      </details>
+    </aside>
+
+    <main class="center">
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="modelo" aria-selected="true">Modelo 3D</button>
+        <button role="tab" data-tab="mapa" aria-selected="false">Ubicación y mapas REP</button>
+        <button role="tab" data-tab="espectro" aria-selected="false">Espectro</button>
+        <button role="tab" data-tab="tablas" aria-selected="false">Resultados</button>
+      </div>
+      <section class="tab-panel" data-panel="modelo">
+        <div class="viewer-bar">
+          <div class="seg" id="loadCases" role="radiogroup" aria-label="Caso de carga"></div>
+          <div class="nave-opts" id="naveOpts" hidden>
+            <label class="inline">Presión interna <select id="optInternal"><option value="pos">+GCpi</option><option value="neg">−GCpi</option></select></label>
+            <label class="inline">Cp techo <select id="optRoof"><option value="A">Caso A</option><option value="B">Caso B</option></select></label>
+          </div>
+          <span class="grow"></span>
+          <label class="inline"><input type="checkbox" id="optLabels" checked> Etiquetas</label>
+          <div class="seg small" role="group" aria-label="Vista">
+            <button data-view="iso">Iso</button><button data-view="front">Frente</button><button data-view="side">Lado</button><button data-view="top">Planta</button>
+          </div>
+        </div>
+        <div class="viewer" id="viewer"></div>
+        <div class="viewer-legend" id="viewerLegend"></div>
+      </section>
+      <section class="tab-panel" data-panel="mapa" hidden><div class="mapview" id="mapview"></div></section>
+      <section class="tab-panel scroll" data-panel="espectro" hidden><div class="chart-wrap" id="spectrum"></div><div class="chart-tip" hidden></div></section>
+      <section class="tab-panel scroll" data-panel="tablas" hidden><div id="tables" class="tables"></div></section>
+    </main>
+
+    <aside class="summary" aria-label="Resumen de resultados" aria-live="polite">
+      <div id="summary"></div>
+    </aside>
+  </div>
+  <div class="toast" id="toast" role="status" hidden></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,118 @@
+# Force Calculation · REP-2021
+
+Aplicación de escritorio (Electron) para calcular **cargas de viento y sismo** según el
+**Reglamento de Diseño Estructural de Panamá REP-2021** (que adopta ASCE/SEI 7-05),
+con visor 3D interactivo, selección de Ss/S1 sobre los mapas oficiales y exportación
+de la memoria de cálculo a **Word (.docx)** y **PDF**.
+
+![Modelo de edificio con cargas de viento](docs/img/modelo-edificio.png)
+
+## Qué hace
+
+| Tipología | Viento (ASCE 7-05 Cap. 6, Método 2) | Sismo (ASCE 7-05 Cap. 11/12/15) |
+|---|---|---|
+| Edificio de varios niveles | Fuerzas por nivel en X e Y (barlovento + sotavento), presiones en techo, torsión caso 2, carga mínima 0.48 kPa | FLE por dirección, Ta, Cu, Cs con mínimo REP, distribución vertical, cortantes y momentos |
+| Nave industrial a dos aguas | Cp de muros y techo (Fig. 6-6), ±GCpi, casos A/B, cargas lineales por marco | Cortante basal y por marco |
+| Torre de celosía / chimenea / poste | Cf de Fig. 6-23 (ε) o Fig. 6-21, factor de ráfaga flexible Gf, accesorios (Cf·A) | No-edificio Tabla 15.4-2, período manual o Rayleigh con EI |
+| Tanque elevado | Recipiente y soporte (patas o pedestal) | Péndulo invertido con masa de agua, Tabla 15.4-2 |
+
+Disposiciones propias del REP-2021 incluidas:
+
+- Velocidad básica de viento de la **Tabla 4.1** (Pacífico/Atlántico; 10, 20, 50 y 100 años). Las cargas resultantes son de servicio (§4.2).
+- Límites de deformación bajo viento de §4.3: H/400, h/300 y 0.2 m/s².
+- **Cs mínimo = 0.044·SDS·I**, con piso de 0.01 en edificios y 0.03 en no-edificios (§5.2.1).
+- **TL = 10 s** (§5.13).
+- Ss y S1 de los **mapas de aceleraciones espectrales** (§5.12).
+
+## Mapas Ss y S1
+
+Los 72 mapas de `REP-2014 MAPAS.pdf` (hojas 1–36 de Ss y de S1) se digitalizaron
+automáticamente (`tools/digitize/`) y se convirtieron en una grilla de 0.01° que la app
+interpola por coordenadas. En la pestaña **Ubicación y mapas REP** se hace clic en el
+mapa de Panamá y al lado se muestra **la hoja REP original** con el punto marcado. Se
+puede afinar la ubicación haciendo clic sobre la misma hoja, que tiene los nombres de
+los corregimientos.
+
+![Mapa REP](docs/img/mapa-rep.png)
+
+Precisión, medida con validación cruzada sobre las propias etiquetas de los mapas:
+
+- **Error mediano:** 0.011 g en Ss y 0.009 g en S1.
+- **Percentil 90:** 0.09 g en Ss, en zonas de curvas muy apretadas cerca de fallas.
+
+> **Cobertura:** los mapas REP-2014 **no tienen curvas** en el occidente de Chiriquí
+> (hojas 1, 2, 9, 10, 20; por ejemplo David y Boquete) ni en algunas zonas del Darién.
+> Allí la app no interpola: muestra "sin cobertura" y pide Ss y S1 manuales. El REP-2021
+> menciona mapas nuevos "para toda la República" que la JTIA distribuye por separado.
+> Si la etiqueta de contorno más cercana está a más de 15 km, la app advierte que la
+> confianza es baja.
+
+## Instalación y uso
+
+Requisitos: [Node.js](https://nodejs.org) 20 o superior.
+
+```bash
+npm install
+```
+
+```bash
+npm start
+```
+
+Generar el instalador de Windows (desde Windows):
+
+```bash
+npm run dist
+```
+
+El instalador queda en `dist/ForceCalculation-REP2021-Setup-1.0.0.exe`.
+
+Flujo de trabajo:
+
+1. **Proyecto:** nombre, cliente, ingeniero y fecha (aparecen en la portada del reporte).
+2. **Sitio:** en *Ubicación y mapas REP* elige el punto (Ss y S1 se llenan solos); define la clase de sitio y la categoría de ocupación.
+3. **Viento:** región, período de retorno, exposición, cerramiento y efecto topográfico opcional.
+4. **Estructura:** tipología, geometría, pesos y sistema resistente.
+5. Revisa el **Modelo 3D**, el **Espectro** y los **Resultados**.
+6. **Exportar Word** o **Exportar PDF**.
+
+Los proyectos se guardan como archivos `.fcp` (JSON).
+
+## Pruebas
+
+```bash
+npm test
+```
+
+Las pruebas unitarias verifican los valores contra las tablas de ASCE 7-05 (Fa, Fv, Kz,
+G, Cp, Cf, Cs) y contra la Tabla 4.1 del REP. La autoprueba de la interfaz recorre las
+4 tipologías, toma capturas y exporta los 8 reportes:
+
+```bash
+FC_SELFTEST=/ruta/salida npx electron .
+```
+
+## Estructura
+
+```
+src/
+  calc/        motor de cálculo (sin interfaz, probado con node:test)
+    rep.js         disposiciones del REP-2021
+    seismic.js     ASCE 7-05 Cap. 11, 12, 15
+    wind.js        ASCE 7-05 Cap. 6 (Kz, Kzt, G/Gf, Cp, Cf)
+    systems.js     Tablas 12.2-1 y 15.4-2
+    typologies.js  edificio, nave, torre, tanque
+    maplookup.js   consulta de la grilla Ss/S1
+  renderer/    interfaz (visor Three.js, mapa, gráficos, formularios)
+  report/      generadores Word (docx) y HTML→PDF
+  main/        proceso principal de Electron
+  data/        grilla Ss/S1, hojas de los mapas, contorno de Panamá
+tools/digitize scripts de digitalización de los mapas (Python + Tesseract)
+```
+
+## Limitaciones conocidas
+
+- **Sismo:** se usa el procedimiento de fuerza lateral equivalente. No incluye análisis modal espectral, irregularidades (§12.3), factor de redundancia ρ calculado (se muestra ρ = 1.0), ni el componente convectivo del agua en tanques (§15.7.6).
+- **Viento:** se usa el Método 2 para SPRFV. No incluye componentes y revestimientos (Fig. 6-11 a 6-17).
+- **Torres de celosía:** no se considera el apantallamiento entre caras; en los tanques no se incluye el área de las riostras.
+- **Responsabilidad:** los resultados deben ser revisados por un ingeniero idóneo.

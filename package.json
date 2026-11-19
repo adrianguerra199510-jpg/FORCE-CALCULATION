@@ -7,15 +7,50 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.mjs",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win nsis",
+    "dist:dir": "electron-builder --dir",
+    "postinstall": "node tools/vendor.js"
   },
   "license": "UNLICENSED",
   "private": true,
   "dependencies": {
+    "@fontsource/barlow": "^5.1.0",
+    "@fontsource/barlow-semi-condensed": "^5.1.0",
     "docx": "^9.0.3",
-    "three": "^0.170.0"
+    "three": "^0.170.0",
+    "topojson-client": "^3.1.0",
+    "world-atlas": "^2.0.2"
   },
   "devDependencies": {
-    "electron": "^33.2.1"
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "pa.forcecalculation.rep2021",
+    "productName": "Force Calculation REP-2021",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "!src/**/*.md"
+    ],
+    "asar": true,
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "ForceCalculation-REP2021-Setup-${version}.${ext}"
+    },
+    "fileAssociations": [
+      {
+        "ext": "fcp",
+        "name": "Proyecto Force Calculation",
+        "description": "Proyecto de cargas de viento y sismo"
+      }
+    ]
   }
 }
