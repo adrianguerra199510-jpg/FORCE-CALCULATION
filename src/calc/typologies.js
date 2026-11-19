@@ -802,7 +802,7 @@ export function computeGenerico(project) {
         const zr = rg.eave + rg.rise / 3;
         const q = W.qz(zr, ctx).q;
         const Cf = rows[rows.length - 1].Cf;
-        rows.push({ vol: v.name, roof: true, z0: rg.eave, z1: rg.top, zc: zr, Kz: W.Kz(zr, ctx.exposure), qz: q, Kd, Cf, fig: `techo ${ROOF_LABEL[rg.type].toLowerCase()}`, Af: Ar, F: q * G * Cf * Ar });
+        rows.push({ vol: v.name, roof: true, z0: rg.eave, z1: rg.top, zc: zr, Kz: W.Kz(zr, ctx.exposure), qz: q, Kd, Cf, fig: `techo ${ROOF_LABEL[rg.type].toLowerCase()}`, Af: Ar, p: q * G * Cf * (open ? +v.eps : 1), F: q * G * Cf * Ar });
       }
       if (+v.nCols > 0 && +v.z0 > 0) {
         const q = W.integrateQ(0, +v.z0, ctx0) / +v.z0;

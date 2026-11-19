@@ -232,19 +232,26 @@ function renderLoadCases() {
 }
 
 /** Dirección del viento del caso de carga activo en coordenadas del visor (X, o Z para la "Y" del modelo). */
+/**
+ * Flecha indicadora del caso activo (viento o sismo) en coordenadas del visor:
+ * eje X del modelo = X del visor; eje Y del modelo = Z del visor.
+ */
 function windDirFor(r, lc) {
   const t = state.project.wind.topo;
   const parallel2D = t.enabled && t.type !== 'hill3D';
+  const W = (axis, sign, kzt = true) => ({ kind: 'wind', axis, sign, kztApplies: kzt, label: `Viento ${axis === 'X' ? 'X' : 'Y'}` });
+  const Q = (axis, sign) => ({ kind: 'quake', axis, sign, label: `Sismo ${axis === 'X' ? 'X' : 'Y'}` });
   switch (r.typology) {
     case 'edificio':
+      return { wx: W('X', 1), wy: W('Z', -1, !parallel2D), sx: Q('X', 1), sy: Q('Z', -1) }[lc] || null;
     case 'generico':
-      return lc === 'wy' ? { axis: 'Z', sign: -1, kztApplies: !parallel2D } : lc === 'wx' ? { axis: 'X', sign: 1, kztApplies: true } : null;
+      return { wx: W('X', 1), wy: W('Z', -1, !parallel2D), s: Q('X', 1) }[lc] || null;
     case 'nave':
-      return lc === 'wl' ? { axis: 'Z', sign: 1, kztApplies: !parallel2D } : lc === 'wt' ? { axis: 'X', sign: 1, kztApplies: true } : null;
+      return { wt: W('X', 1), wl: W('Z', 1, !parallel2D), sx: Q('X', 1), sy: Q('Z', -1) }[lc] || null;
     case 'valla':
-      return { axis: 'Z', sign: -1, kztApplies: true };
+      return lc === 's' ? Q('Z', -1) : W('Z', -1);
     default:
-      return { axis: 'X', sign: 1, kztApplies: true };
+      return lc === 's' ? Q('X', 1) : W('X', 1);
   }
 }
 

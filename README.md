@@ -30,8 +30,8 @@ Disposiciones propias del REP-2021 incluidas:
 
 La casilla **Entorno** dibuja un esquema de la categoría de exposición alrededor de la
 estructura (B con edificaciones y arbolado denso, C con terreno abierto y obstáculos
-dispersos, D con agua a barlovento) y una flecha que indica la dirección del viento del
-caso de carga activo, con la exposición (α y zg de la Tabla 6-2).
+dispersos, D con agua a barlovento) y una flecha que indica la dirección del caso de
+carga activo: azul "Viento X / Viento Y" o roja "Sismo X / Sismo Y".
 
 ## Topografía en el visor
 
@@ -68,13 +68,13 @@ Precisión, medida con validación cruzada sobre las propias etiquetas de los ma
 
 ## Descarga (Windows)
 
-**[ForceCalculation-REP2021-Setup-1.2.5.exe](https://github.com/adrianguerra199510-jpg/FORCE-CALCULATION/raw/claude/nifty-einstein-5vo4up/instalador/ForceCalculation-REP2021-Setup-1.2.5.exe)** (93 MB, Windows 10/11 de 64 bits)
+**[ForceCalculation-REP2021-Setup-1.2.6.exe](https://github.com/adrianguerra199510-jpg/FORCE-CALCULATION/raw/claude/nifty-einstein-5vo4up/instalador/ForceCalculation-REP2021-Setup-1.2.6.exe)** (93 MB, Windows 10/11 de 64 bits)
 
 1. Descarga y ejecuta el instalador. Permite elegir la carpeta y crea accesos directos en el escritorio y en el menú Inicio.
 2. El instalador no está firmado digitalmente. Windows SmartScreen mostrará "Windows protegió su PC": haz clic en **Más información → Ejecutar de todas formas**.
 3. Los proyectos se guardan como `.fcp`; el instalador asocia esa extensión con la app.
 
-SHA-256: `e35ebcb653f0f5898fc4f9263061ba06549531404ca79e1a75f21ced29b1b62a`
+SHA-256: `d289c74a24fc1ed5b19a1f696b2b9fe71d748b2b6c68b6e6fe8b8045b74e2481`
 
 ## Instalación y uso (desde el código)
 
@@ -94,7 +94,7 @@ Generar el instalador de Windows (desde Windows):
 npm run dist
 ```
 
-El instalador queda en `dist/ForceCalculation-REP2021-Setup-1.2.5.exe`.
+El instalador queda en `dist/ForceCalculation-REP2021-Setup-1.2.6.exe`.
 
 Flujo de trabajo:
 

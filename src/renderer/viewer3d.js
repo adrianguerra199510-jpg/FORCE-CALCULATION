@@ -40,6 +40,7 @@ export class Viewer {
     this.topo = null;
     this.envOpts = { show: true, exposure: 'C' };
     this.windDir = { axis: 'X', sign: 1, kztApplies: true };
+    this.arrowDir = { kind: 'wind', axis: 'X', sign: 1, label: 'Viento X' }; // flecha indicadora del caso activo
     this.worldOffset = [0, 0, 0];
     this.labelScale = 1;
     this.showLabels = true;
@@ -625,51 +626,43 @@ export class Viewer {
           const half = isX ? v.bx / 2 : (v.shape === 'cyl' ? v.bx : v.by) / 2;
           return new THREE.Vector3(v.x, 0, v.y).add(dirv.clone().multiplyScalar(-(half + 0.06)));
         };
+        // estilo de la nave: una flecha por superficie, en su centro, con su valor en kPa
+        const pAll = [...wall.map((r) => r.p), ...d.rows.filter((r) => r.roof).map((r) => r.p), ...d.cols.map((c) => c.F / c.Af)];
+        const pTop = Math.max(...pAll, 1e-9);
+        const arrowAt = (center, p, text) => {
+          const len = (this.size * 0.16 * p) / pTop + 0.5;
+          this.arrow(center.clone().add(dirv.clone().multiplyScalar(-len)).toArray(), dirv.toArray(), len, COL.wind);
+          if (this.showLabels) this.loads.add(this.label(text, center.clone().add(dirv.clone().multiplyScalar(-0.3)).add(new THREE.Vector3(0, 0.5, 0)).toArray(), '#ffffff', '#1F5FA8'));
+        };
+        const kpa = (lo, hi) => (Math.abs(hi - lo) < 0.005 ? `${hi.toFixed(2)} kPa` : `${lo.toFixed(2)}–${hi.toFixed(2)} kPa`);
         for (const v of vols) {
           const rr = wall.filter((r) => r.vol === v.name);
           if (!rr.length) continue;
           const f0 = faceOf(v);
           const b = rr[0].b;
-          // lámina de presión: una banda por franja, coloreada por p (kPa)
-          for (const r of rr) {
-            const pts = [
-              f0.clone().add(across.clone().multiplyScalar(-b / 2)).setY(r.z0),
-              f0.clone().add(across.clone().multiplyScalar(b / 2)).setY(r.z0),
-              f0.clone().add(across.clone().multiplyScalar(b / 2)).setY(r.z1),
-              f0.clone().add(across.clone().multiplyScalar(-b / 2)).setY(r.z1),
-            ];
-            const geo = new THREE.BufferGeometry().setFromPoints([pts[0], pts[1], pts[2], pts[0], pts[2], pts[3]]);
-            this.loads.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: ramp(r.p), transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false })));
-            // campo de flechas pequeñas: la carga actúa en toda la superficie
-            const nCol = Math.max(2, Math.min(5, Math.round(b / Math.max(1, (r.z1 - r.z0)))));
-            for (let k = 0; k < nCol; k++) {
-              const off = -b / 2 + (b * (k + 0.5)) / nCol;
-              const len = L * 0.22 * (r.p / pmax) + L * 0.03;
-              const tip = f0.clone().add(across.clone().multiplyScalar(off)).setY(r.zc);
-              const tail = tip.clone().add(dirv.clone().multiplyScalar(-len));
-              this.thinArrow(tail, dirv, len, COL.wind);
-            }
-          }
-          // etiquetas de presión en la franja inferior y superior
-          const lo = rr[0];
-          const hi = rr[rr.length - 1];
-          if (this.showLabels) {
-            this.loads.add(this.label(`${lo.p.toFixed(2)} kPa`, f0.clone().add(across.clone().multiplyScalar(-b / 2 - 0.2)).setY(lo.zc).toArray(), '#1C2A33', 'rgba(255,255,255,0.9)'));
-            if (hi !== lo) this.loads.add(this.label(`${hi.p.toFixed(2)} kPa`, f0.clone().add(across.clone().multiplyScalar(-b / 2 - 0.2)).setY(hi.zc).toArray(), '#1C2A33', 'rgba(255,255,255,0.9)'));
-          }
-          // resultante del volumen
-          const pv = d.perVol.find((x) => x.vol === v.name);
-          const len = Math.max((L * 0.9 * pv.F) / Fmax, L * 0.15);
-          const tip = f0.clone().add(across.clone().multiplyScalar(b / 2 + 0.6)).setY(pv.z);
-          this.arrow(tip.clone().add(dirv.clone().multiplyScalar(-len)).toArray(), dirv.toArray(), len, COL.wind, `${v.name}: F = ${fmt(pv.F)}`);
+          const z0 = rr[0].z0;
+          const z1 = rr[rr.length - 1].z1;
+          const pMin = Math.min(...rr.map((r) => r.p));
+          const pMaxV = Math.max(...rr.map((r) => r.p));
+          const pAvg = rr.reduce((acc, r) => acc + r.p * (r.z1 - r.z0), 0) / (z1 - z0);
+          // superficie cargada (cara de barlovento del volumen)
+          const pts = [
+            f0.clone().add(across.clone().multiplyScalar(-b / 2)).setY(z0),
+            f0.clone().add(across.clone().multiplyScalar(b / 2)).setY(z0),
+            f0.clone().add(across.clone().multiplyScalar(b / 2)).setY(z1),
+            f0.clone().add(across.clone().multiplyScalar(-b / 2)).setY(z1),
+          ];
+          const geo = new THREE.BufferGeometry().setFromPoints([pts[0], pts[1], pts[2], pts[0], pts[2], pts[3]]);
+          this.loads.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: ramp(pAvg), transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false })));
+          arrowAt(f0.clone().setY((z0 + z1) / 2), pAvg, kpa(pMin, pMaxV));
+          // techo (área proyectada)
+          for (const r of d.rows.filter((x) => x.roof && x.vol === v.name)) arrowAt(f0.clone().setY(r.zc), r.p, `Techo: ${r.p.toFixed(2)} kPa`);
         }
         for (const c of d.cols) {
           const v = byName[c.vol];
-          const f0 = faceOf(v);
-          const len = Math.max((L * 0.9 * c.F) / Fmax, L * 0.12);
-          const tip = f0.clone().setY(c.z);
-          this.arrow(tip.clone().add(dirv.clone().multiplyScalar(-len)).toArray(), dirv.toArray(), len, COL.wind, `Columnas: ${fmt(c.F)}`);
+          arrowAt(faceOf(v).setY(c.z), c.F / c.Af, `Columnas: ${(c.F / c.Af).toFixed(2)} kPa`);
         }
+        void Fmax;
       } else {
         const items = res.seismic.directions.X.levels.map((l) => ({ v: byName[l.vol], z: l.h, F: l.F }));
         const Fmax = Math.max(...items.map((i) => i.F), 1e-9);
@@ -934,10 +927,13 @@ export class Viewer {
   }
 
   /** dir: { axis: 'X'|'Z', sign: ±1, kztApplies } */
+  /** dir: { kind: 'wind'|'quake', axis: 'X'|'Z', sign: ±1, label, kztApplies } */
   setWindDir(dir) {
-    const d = { ...this.windDir, ...dir };
-    const changed = d.axis !== this.windDir.axis || d.sign !== this.windDir.sign || d.kztApplies !== this.windDir.kztApplies;
-    this.windDir = d;
+    const prevA = this.arrowDir;
+    const prevW = this.windDir;
+    this.arrowDir = { kind: dir.kind || 'wind', axis: dir.axis, sign: dir.sign, label: dir.label };
+    if (this.arrowDir.kind === 'wind') this.windDir = { axis: dir.axis, sign: dir.sign, kztApplies: dir.kztApplies !== false };
+    const changed = ['kind', 'axis', 'sign', 'label'].some((k) => prevA[k] !== this.arrowDir[k]) || prevW.axis !== this.windDir.axis || prevW.sign !== this.windDir.sign || prevW.kztApplies !== this.windDir.kztApplies;
     if (changed) this.buildEnvironment();
   }
 
@@ -1037,17 +1033,27 @@ export class Viewer {
     const yW = this.groundAt(C.x, C.z) + sz.y + Math.max(2, this.size * 0.18);
     tip.y = yW;
     tail.y = yW;
-    const mat = new THREE.MeshStandardMaterial({ color: COL.wind });
-    const qDir = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    const ad = this.arrowDir;
+    const adir = ad.axis === 'X' ? new THREE.Vector3(ad.sign, 0, 0) : new THREE.Vector3(0, 0, ad.sign);
+    const isQuake = ad.kind === 'quake';
+    {
+      // la flecha se recoloca según la dirección del caso activo
+      const t0 = C.clone().add(adir.clone().multiplyScalar(-Lw * 0.65));
+      tail.copy(t0).setY(yW);
+      tip.copy(t0.clone().add(adir.clone().multiplyScalar(Lw))).setY(yW);
+    }
+    const mat = new THREE.MeshStandardMaterial({ color: isQuake ? COL.quake : COL.wind });
+    const qDir = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), adir);
     const shaft = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, Lw - headL, 16), mat);
     const head = new THREE.Mesh(new THREE.ConeGeometry(rad * 2.6, headL, 20), mat);
     shaft.quaternion.copy(qDir);
     head.quaternion.copy(qDir);
-    shaft.position.copy(tail).add(dir.clone().multiplyScalar((Lw - headL) / 2));
-    head.position.copy(tail).add(dir.clone().multiplyScalar(Lw - headL / 2));
+    shaft.position.copy(tail).add(adir.clone().multiplyScalar((Lw - headL) / 2));
+    head.position.copy(tail).add(adir.clone().multiplyScalar(Lw - headL / 2));
     this.env.add(shaft, head);
-    this.env.add(this.label(`Viento · Exposición ${expTxt} (α = ${e.alpha}, zg = ${e.zg.toFixed(0)} m)`, tail.clone().add(new THREE.Vector3(0, rad * 4 + 1, 0)).toArray(), '#ffffff', '#1F5FA8'));
-    if (topoOn && !this.windDir.kztApplies) {
+    this.env.add(this.label(ad.label, tail.clone().add(new THREE.Vector3(0, rad * 4 + 1, 0)).toArray(), '#ffffff', isQuake ? '#C8102E' : '#1F5FA8'));
+    void e; void expTxt;
+    if (!isQuake && topoOn && !this.windDir.kztApplies) {
       this.env.add(this.label('Viento paralelo a la cresta: Kzt = 1.00', [C.x, this.groundAt(C.x, C.z) + sz.y * 1.3 + 2, C.z], '#1C2A33', '#F2E330'));
     }
     void side;
