@@ -56,7 +56,17 @@ Precisión, medida con validación cruzada sobre las propias etiquetas de los ma
 > Si la etiqueta de contorno más cercana está a más de 15 km, la app advierte que la
 > confianza es baja.
 
-## Instalación y uso
+## Descarga (Windows)
+
+**[ForceCalculation-REP2021-Setup-1.0.0.exe](https://github.com/adrianguerra199510-jpg/FORCE-CALCULATION/raw/claude/nifty-einstein-5vo4up/instalador/ForceCalculation-REP2021-Setup-1.0.0.exe)** (93 MB, Windows 10/11 de 64 bits)
+
+1. Descarga y ejecuta el instalador. Permite elegir la carpeta y crea accesos directos en el escritorio y en el menú Inicio.
+2. El instalador no está firmado digitalmente. Windows SmartScreen mostrará "Windows protegió su PC": haz clic en **Más información → Ejecutar de todas formas**.
+3. Los proyectos se guardan como `.fcp`; el instalador asocia esa extensión con la app.
+
+SHA-256: `1115981c87d8c355f3298646c77f3b2a7411cb3484013127772c520ff4bc2c73`
+
+## Instalación y uso (desde el código)
 
 Requisitos: [Node.js](https://nodejs.org) 20 o superior.
 
