@@ -344,10 +344,11 @@ function profileRows(r) {
     });
   }
   if (r.typology === 'tanque') {
-    return [
-      { name: 'Soporte', wind: r.wind.parts[1].F, quake: r.seismic.directions.X.levels[0].F },
-      { name: 'Tanque', wind: r.wind.parts[0].F, quake: r.seismic.directions.X.levels[1].F },
-    ];
+    const lv = r.seismic.directions.X.levels;
+    const rows = [];
+    if (r.wind.parts.length > 1) rows.push({ name: 'Soporte', wind: r.wind.parts[1].F, quake: lv[0].F });
+    rows.push({ name: 'Tanque', wind: r.wind.parts[0].F, quake: lv[lv.length - 1].F });
+    return rows;
   }
   return null;
 }
@@ -530,6 +531,48 @@ async function selfTest() {
     const p = await exportReport('pdf');
     await log(`${variant}: docx=${d} pdf=${p}`);
   }
+  // edificio de 100 niveles (escala de flechas)
+  state.project.typology = 'edificio';
+  state.project.edificio.nStories = 100;
+  state.project.meta.nombre = 'Prueba edificio 100 niveles';
+  renderAllForms();
+  doCompute(true);
+  for (const lc of ['wx', 'sy']) {
+    state.loadCase = lc;
+    renderLoadCases();
+    applyLoadCase();
+    await wait(500);
+    await window.api.selftest.capture(`alto-${lc}`);
+  }
+  state.project.edificio.nStories = 6;
+  // tanque cuadrado sin patas
+  state.project.typology = 'tanque';
+  Object.assign(state.project.tanque, { shape: 'rect', support: 'apoyado', Hs: 0 });
+  state.project.meta.nombre = 'Prueba tanque apoyado';
+  renderAllForms();
+  doCompute(true);
+  state.loadCase = 'w';
+  renderLoadCases();
+  applyLoadCase();
+  await wait(400);
+  await window.api.selftest.capture('tanque-apoyado-w');
+  await log(`tanque apoyado: partes=${state.res.wind.parts.length} niveles=${state.res.seismic.directions.X.levels.length}`);
+  await exportReport('pdf');
+  Object.assign(state.project.tanque, { shape: 'cyl', support: 'patas', Hs: 20 });
+  // mapa con zoom
+  showTab('mapa');
+  mapView.view = { z: 6, px: 0, py: 0 };
+  const d = mapView.dims();
+  const [cx, cy] = mapView.xy(-79.535, 8.952, d);
+  mapView.view.px = d.w / 2 - cx;
+  mapView.view.py = d.h / 2 - cy;
+  mapView.draw();
+  mapView.zoomSheet(1.6, 200, 120);
+  await wait(600);
+  await window.api.selftest.capture('mapa-zoom');
+  mapView.view = { z: 1, px: 0, py: 0 };
+  showTab('modelo');
+
   // escenarios topográficos
   const topoCases = [
     ['edificio', { enabled: true, type: 'escarp2D', H: 35, Lh: 30, x: 15 }, 'acantilado'],

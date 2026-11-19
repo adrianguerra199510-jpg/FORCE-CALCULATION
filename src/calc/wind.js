@@ -339,3 +339,36 @@ export function terrainElevation(topo, x, z = 0) {
   if (type === 'hill3D') return bump(Math.hypot(x, z));
   return bump(x);
 }
+
+// ---------------------------------------------------------------------------
+// Fig. 6-7: techos en domo sobre base circular (Cp en A barlovento, B cima, C sotavento)
+// ---------------------------------------------------------------------------
+const DOME_FD = [0.05, 0.1, 0.25, 0.325, 0.5];
+const DOME = {
+  A: {
+    0: (fd) => interp1(fd, [0.05, 0.5], [0.15, 0.8]),
+    0.25: (fd) => interp1(fd, [0.05, 0.5], [-1.4, 0.8]),
+    1.0: (fd) => interp1(fd, [0.05, 0.1, 0.325, 0.5], [-1.4, -1.7, -1.4, 0.8]),
+  },
+  B: {
+    0: (fd) => interp1(fd, [0.05, 0.5], [-0.25, -1.2]),
+    0.5: (fd) => interp1(fd, [0.05, 0.1, 0.25, 0.5], [-0.5, -0.8, -1.2, -1.5]),
+  },
+  C: { 0: () => 0.0, 0.5: () => -0.5 },
+};
+void DOME_FD;
+
+function domeAt(point, hDD, fD) {
+  const tbl = DOME[point];
+  const keys = Object.keys(tbl).map(Number).sort((a, b) => a - b);
+  const fd = clamp(fD, 0.05, 0.5);
+  const vals = keys.map((k) => tbl[k](fd));
+  return interp1(clamp(hDD, keys[0], keys[keys.length - 1]), keys, vals);
+}
+
+/** Cp del domo (Fig. 6-7). hD = altura de la base del domo (arranque), f = flecha, D = diámetro. */
+export function cpDome(hD, f, D) {
+  const hDD = hD / D;
+  const fD = f / D;
+  return { A: domeAt('A', hDD, fD), B: domeAt('B', hDD, fD), C: domeAt('C', hDD, fD), hDD, fD };
+}

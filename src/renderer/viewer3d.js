@@ -118,8 +118,9 @@ export class Viewer {
     const d = new THREE.Vector3(...dir).normalize();
     const o = new THREE.Vector3(...from);
     len = Math.max(len, 0.05);
-    const r = this.size * 0.006;
-    const headL = Math.min(len * 0.35, this.size * 0.05);
+    const ref = this.arrowRef || this.size * 0.45;
+    const r = ref * 0.012;
+    const headL = Math.min(len * 0.35, ref * 0.12);
     const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
     const shaft = new THREE.Mesh(new THREE.CylinderGeometry(r, r, Math.max(len - headL, 0.01), 10), mat);
     const head = new THREE.Mesh(new THREE.ConeGeometry(r * 3, headL, 14), mat);
@@ -130,7 +131,7 @@ export class Viewer {
     head.position.copy(o).add(d.clone().multiplyScalar(len - headL / 2));
     this.loads.add(shaft, head);
     if (label && this.showLabels) {
-      const tail = o.clone().add(d.clone().multiplyScalar(-this.size * 0.03));
+      const tail = o.clone().add(d.clone().multiplyScalar(-(this.arrowRef || this.size) * 0.05));
       tail.y += labelDy;
       this.loads.add(this.label(label, tail.toArray(), '#ffffff', color === COL.quake ? '#C8102E' : color === COL.suction ? '#7A3EA0' : '#1F5FA8'));
     }
@@ -253,16 +254,28 @@ export class Viewer {
   buildTanque(res) {
     const g = res.geometry;
     const { D, Ht, Hw, Hs } = g;
-    const tank = new THREE.Mesh(new THREE.CylinderGeometry(D / 2, D / 2, Ht, 40, 1, true), new THREE.MeshStandardMaterial({ color: COL.tank, transparent: true, opacity: 0.45, side: THREE.DoubleSide }));
+    const sq = g.square;
+    const shell = sq ? new THREE.BoxGeometry(D, Ht, D) : new THREE.CylinderGeometry(D / 2, D / 2, Ht, 40, 1, true);
+    const tank = new THREE.Mesh(shell, new THREE.MeshStandardMaterial({ color: COL.tank, transparent: true, opacity: 0.45, side: THREE.DoubleSide }));
     tank.position.y = Hs + Ht / 2;
-    const water = new THREE.Mesh(new THREE.CylinderGeometry(D / 2 - 0.05, D / 2 - 0.05, Hw, 40), new THREE.MeshStandardMaterial({ color: COL.water, transparent: true, opacity: 0.55 }));
+    const water = new THREE.Mesh(sq ? new THREE.BoxGeometry(D - 0.1, Hw, D - 0.1) : new THREE.CylinderGeometry(D / 2 - 0.05, D / 2 - 0.05, Hw, 40), new THREE.MeshStandardMaterial({ color: COL.water, transparent: true, opacity: 0.55 }));
     water.position.y = Hs + Hw / 2;
-    const floor = new THREE.Mesh(new THREE.CylinderGeometry(D / 2, D / 2, 0.15, 40), new THREE.MeshStandardMaterial({ color: COL.member }));
+    const floor = new THREE.Mesh(sq ? new THREE.BoxGeometry(D, 0.15, D) : new THREE.CylinderGeometry(D / 2, D / 2, 0.15, 40), new THREE.MeshStandardMaterial({ color: COL.member }));
     floor.position.y = Hs;
-    const roof = new THREE.Mesh(new THREE.ConeGeometry(D / 2, D * 0.15, 40), new THREE.MeshStandardMaterial({ color: COL.tank }));
+    const roof = new THREE.Mesh(sq ? new THREE.ConeGeometry(D * 0.71, D * 0.15, 4, 1) : new THREE.ConeGeometry(D / 2, D * 0.15, 40), new THREE.MeshStandardMaterial({ color: COL.tank }));
+    if (sq) roof.rotation.y = Math.PI / 4;
     roof.position.y = Hs + Ht + D * 0.075;
-    this.model.add(tank, water, floor, roof);
-    if (g.support === 'pedestal') {
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(shell), new THREE.LineBasicMaterial({ color: COL.member }));
+    edges.position.copy(tank.position);
+    this.model.add(tank, water, floor, roof, edges);
+    if (g.support === 'apoyado') {
+      if (Hs > 0) {
+        // superficie de apoyo (no modelada): losa de referencia
+        const slab = new THREE.Mesh(new THREE.BoxGeometry(D * 2, 0.3, D * 2), new THREE.MeshStandardMaterial({ color: COL.slab, transparent: true, opacity: 0.5 }));
+        slab.position.y = Hs - 0.15;
+        this.model.add(slab, this.label(`Apoyo a ${Hs.toFixed(1)} m`, [D, Hs, 0]));
+      }
+    } else if (g.support === 'pedestal') {
       const p = new THREE.Mesh(new THREE.CylinderGeometry(g.Dped / 2, g.Dped / 2 * 1.15, Hs, 32), new THREE.MeshStandardMaterial({ color: 0x9aa7ab }));
       p.position.y = Hs / 2;
       this.model.add(p);
@@ -286,7 +299,7 @@ export class Viewer {
       }
     }
     this.ground(0.01, 0.01);
-    this.size = (Hs + Ht) * 0.95;
+    this.size = Math.max((Hs + Ht) * 0.95, D * 1.6);
     this.center = [0, (Hs + Ht) / 2, 0];
   }
 
@@ -341,6 +354,98 @@ export class Viewer {
   }
 
 
+
+  /** Malla a partir de caras poligonales (cada cara = lista de puntos [x,y,z], triangulada en abanico). */
+  polyMesh(faces, color, opacity, wire = false) {
+    const pos = [];
+    for (const f of faces) for (let i = 1; i < f.length - 1; i++) pos.push(...f[0], ...f[i], ...f[i + 1]);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.computeVertexNormals();
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, roughness: 0.8, depthWrite: opacity > 0.4 })));
+    const edges = [];
+    for (const f of faces) for (let i = 0; i < f.length; i++) edges.push(new THREE.Vector3(...f[i]), new THREE.Vector3(...f[(i + 1) % f.length]));
+    g.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(edges), new THREE.LineBasicMaterial({ color: COL.member, transparent: wire, opacity: wire ? 0.7 : 1 })));
+    return g;
+  }
+
+  roofMesh(v, color, open) {
+    const rg = v.rg;
+    if (!rg || rg.type === 'plano' || !(rg.rise > 0)) return null;
+    const e = rg.eave;
+    const t = rg.top;
+    const P = (dx, y, dz) => [v.x + dx, y, v.y + dz];
+    const a = v.bx / 2;
+    const b = v.by / 2;
+    const op = open ? 0.15 : 0.6;
+    if (rg.type === 'domo') {
+      const D = v.bx;
+      const f = rg.rise;
+      const R = (D * D / 4 + f * f) / (2 * f);
+      const cap = Math.asin(Math.min(1, D / 2 / R));
+      const geo = new THREE.SphereGeometry(R, 40, 16, 0, Math.PI * 2, 0, cap);
+      const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, transparent: true, opacity: op, side: THREE.DoubleSide, roughness: 0.7 }));
+      m.position.set(v.x, t - R, v.y);
+      const g = new THREE.Group();
+      g.add(m);
+      const w = new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.SphereGeometry(R, 20, 6, 0, Math.PI * 2, 0, cap)), new THREE.LineBasicMaterial({ color: COL.member, transparent: true, opacity: 0.35 }));
+      w.position.copy(m.position);
+      g.add(w);
+      return g;
+    }
+    if (rg.type === 'dos') {
+      if (rg.ridgeDir === 'X') {
+        return this.polyMesh([
+          [P(-a, e, -b), P(a, e, -b), P(a, t, 0), P(-a, t, 0)],
+          [P(-a, e, b), P(a, e, b), P(a, t, 0), P(-a, t, 0)],
+          [P(-a, e, -b), P(-a, e, b), P(-a, t, 0)],
+          [P(a, e, -b), P(a, e, b), P(a, t, 0)],
+        ], color, op, open);
+      }
+      return this.polyMesh([
+        [P(-a, e, -b), P(-a, e, b), P(0, t, b), P(0, t, -b)],
+        [P(a, e, -b), P(a, e, b), P(0, t, b), P(0, t, -b)],
+        [P(-a, e, -b), P(a, e, -b), P(0, t, -b)],
+        [P(-a, e, b), P(a, e, b), P(0, t, b)],
+      ], color, op, open);
+    }
+    if (rg.type === 'cuatro') {
+      const r = rg.ridgeLen / 2;
+      if (rg.ridgeDir === 'X') {
+        return this.polyMesh([
+          [P(-a, e, -b), P(a, e, -b), P(r, t, 0), P(-r, t, 0)],
+          [P(-a, e, b), P(a, e, b), P(r, t, 0), P(-r, t, 0)],
+          [P(-a, e, -b), P(-a, e, b), P(-r, t, 0)],
+          [P(a, e, -b), P(a, e, b), P(r, t, 0)],
+        ], color, op, open);
+      }
+      return this.polyMesh([
+        [P(-a, e, -b), P(-a, e, b), P(0, t, r), P(0, t, -r)],
+        [P(a, e, -b), P(a, e, b), P(0, t, r), P(0, t, -r)],
+        [P(-a, e, -b), P(a, e, -b), P(0, t, -r)],
+        [P(-a, e, b), P(a, e, b), P(0, t, r)],
+      ], color, op, open);
+    }
+    if (rg.type === 'una') {
+      if (rg.ridgeDir === 'X') {
+        return this.polyMesh([
+          [P(-a, e, -b), P(a, t, -b), P(a, t, b), P(-a, e, b)],
+          [P(-a, e, -b), P(a, e, -b), P(a, t, -b)],
+          [P(-a, e, b), P(a, e, b), P(a, t, b)],
+          [P(a, e, -b), P(a, e, b), P(a, t, b), P(a, t, -b)],
+        ], color, op, open);
+      }
+      return this.polyMesh([
+        [P(-a, e, -b), P(a, e, -b), P(a, t, b), P(-a, t, b)],
+        [P(-a, e, -b), P(-a, e, b), P(-a, t, b)],
+        [P(a, e, -b), P(a, e, b), P(a, t, b)],
+        [P(-a, e, b), P(a, e, b), P(a, t, b), P(-a, t, b)],
+      ], color, op, open);
+    }
+    return null;
+  }
+
   buildGenerico(res) {
     const vols = res.geometry.volumes;
     const xs = vols.flatMap((v) => [v.x - v.bx / 2, v.x + v.bx / 2]);
@@ -364,6 +469,8 @@ export class Viewer {
       const edges = new THREE.LineSegments(open ? new THREE.WireframeGeometry(geo) : new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: COL.member, transparent: open, opacity: open ? 0.7 : 1 }));
       edges.position.copy(mesh.position);
       this.model.add(edges);
+      const roof = this.roofMesh(v, color, open);
+      if (roof) this.model.add(roof);
       if (v.nCols > 0 && v.z0 > 0) {
         const n = v.nCols;
         const pts = [];
@@ -385,18 +492,50 @@ export class Viewer {
         }
         for (const [px, pz] of pts) this.model.add(this.member([px, 0, pz], [px, v.z0, pz], Math.max(v.dCol / 2, 0.06), 0x6f7f86));
       }
-      if (this.showLabels) this.model.add(this.label(v.name, [v.x, v.z0 + v.h + 0.4, v.y], '#1C2A33', 'rgba(255,255,255,0.85)'));
+      if (this.showLabels) this.model.add(this.label(v.name, [v.x, (v.rg ? v.rg.top : v.z0 + v.h) + 0.4, v.y], '#1C2A33', 'rgba(255,255,255,0.85)'));
     });
     this.size = Math.max(x1 - x0, z1 - z0, res.geometry.top) * 0.95;
     this.center = [(x0 + x1) / 2, res.geometry.top / 2, (z0 + z1) / 2];
   }
 
   // ------------------------------------------------------------- cargas
+  /** Longitud de referencia de las flechas: acotada por la planta para estructuras esbeltas o muy altas. */
+  computeArrowRef() {
+    const box = new THREE.Box3();
+    this.model.traverse((o) => { if ((o.isMesh || o.isLineSegments) && !o.userData.isGround && !o.userData.isLabel) box.expandByObject(o); });
+    if (box.isEmpty()) return this.size * 0.45;
+    const sz = box.getSize(new THREE.Vector3());
+    const plan = Math.max(sz.x, sz.z);
+    const H = sz.y;
+    return Math.min(0.45 * Math.max(plan, H), Math.max(0.9 * plan, 0.15 * H));
+  }
+
+  /** Índices a etiquetar cuando hay muchas fuerzas: ~12 repartidas + extremos + máximo. */
+  labelSet(values) {
+    const n = values.length;
+    if (n <= 14) return new Set(values.map((_, i) => i));
+    const step = Math.ceil(n / 12);
+    const set = new Set([0, n - 1]);
+    for (let i = 0; i < n; i += step) set.add(i);
+    let im = 0;
+    values.forEach((v, i) => { if (v > values[im]) im = i; });
+    set.add(im);
+    return set;
+  }
+
+  /** Perfil que une las colas de las flechas (lectura de la distribución en altura). */
+  profile(points, color) {
+    if (points.length < 3) return;
+    const g = new THREE.BufferGeometry().setFromPoints(points.map((p) => new THREE.Vector3(...p)));
+    this.loads.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.6 })));
+  }
+
   setLoadCase(lc, opts = {}) {
     this.clear(this.loads);
     const res = this.res;
     if (!res || lc === 'none') return;
-    const L = this.size * 0.45;
+    this.arrowRef = this.computeArrowRef();
+    const L = this.arrowRef;
     const fmt = (v) => `${v.toFixed(1)} kN`;
     if (res.typology === 'edificio') {
       const { Bx, By } = res.geometry;
@@ -404,11 +543,20 @@ export class Viewer {
       const rows = lc.startsWith('w') ? res.wind.directions[dir].rows : res.seismic.directions[dir].levels;
       const Fmax = Math.max(...rows.map((r) => r.F));
       const color = lc.startsWith('w') ? COL.wind : COL.quake;
-      for (const r of rows) {
-        const len = (L * r.F) / Fmax;
-        if (dir === 'X') this.arrow([-len - 0.5, r.h, By / 2], [1, 0, 0], len, color, fmt(r.F));
-        else this.arrow([Bx / 2, r.h, By + len + 0.5], [0, 0, -1], len, color, fmt(r.F));
-      }
+      const lab = this.labelSet(rows.map((r) => r.F));
+      const tails = [];
+      rows.forEach((r, i) => {
+        const len = Math.max((L * r.F) / Fmax, L * 0.02);
+        const gap = L * 0.02;
+        if (dir === 'X') {
+          this.arrow([-len - gap, r.h, By / 2], [1, 0, 0], len, color, lab.has(i) ? fmt(r.F) : null);
+          tails.push([-len - gap, r.h, By / 2]);
+        } else {
+          this.arrow([Bx / 2, r.h, By + len + gap], [0, 0, -1], len, color, lab.has(i) ? fmt(r.F) : null);
+          tails.push([Bx / 2, r.h, By + len + gap]);
+        }
+      });
+      if (rows.length > 8) this.profile(tails, color);
     } else if (res.typology === 'nave') {
       if (lc === 'sx' || lc === 'sy') {
         const { span, length, he } = res.geometry;
@@ -422,19 +570,22 @@ export class Viewer {
       if (lc === 'w') {
         const items = [...res.wind.segs.map((s) => ({ z: s.zc, F: s.F })), ...res.wind.appForces.map((a) => ({ z: a.z, F: a.F, app: a.name }))];
         const Fmax = Math.max(...items.map((i) => i.F));
+        const lab = this.labelSet(res.wind.segs.map((s) => s.F));
+        items.forEach((it, i) => { if (!it.app && !lab.has(i)) it.nolabel = true; });
         for (const it of items) {
           const len = (L * it.F) / Fmax;
           // accesorios: flecha por el lado opuesto para no encimarse con los segmentos
           if (it.app) this.arrow([half(it.z) + len + 0.3, it.z, 0], [-1, 0, 0], len, COL.wind, `${it.app}: ${fmt(it.F)}`);
-          else this.arrow([-half(it.z) - len - 0.3, it.z, 0], [1, 0, 0], len, COL.wind, fmt(it.F));
+          else this.arrow([-half(it.z) - len - 0.3, it.z, 0], [1, 0, 0], len, COL.wind, it.nolabel ? null : fmt(it.F));
         }
       } else {
         const lv = res.seismic.directions.X.levels;
         const Fmax = Math.max(...lv.map((l) => l.F));
-        for (const l of lv) {
+        const lab = this.labelSet(lv.map((l) => l.F));
+        lv.forEach((l, i) => {
           const len = (L * l.F) / Fmax;
-          this.arrow([-half(l.h) - len - 0.3, l.h, 0], [1, 0, 0], len, COL.quake, fmt(l.F));
-        }
+          this.arrow([-half(l.h) - len - 0.3, l.h, 0], [1, 0, 0], len, COL.quake, lab.has(i) ? fmt(l.F) : null);
+        });
       }
     } else if (res.typology === 'generico') {
       const vols = res.geometry.volumes;
@@ -450,14 +601,16 @@ export class Viewer {
         color = COL.quake;
       }
       const Fmax = Math.max(...items.map((i) => i.F), 1e-9);
+      const lab = this.labelSet(items.map((i) => i.F));
+      items.forEach((it, i) => { if (!it.label && !lab.has(i)) it.label = ''; });
       for (const it of items) {
         const len = Math.max((L * it.F) / Fmax, L * 0.08);
         const v = it.v || vols[0];
         // la punta toca la cara de barlovento de su propio volumen
         const faceX = v.x - v.bx / 2;
         const faceZ = v.y + (v.shape === 'cyl' ? v.bx : v.by) / 2;
-        if (lc === 'wy') this.arrow([v.x, it.z, faceZ + len + 0.3], [0, 0, -1], len, color, it.label || fmt(it.F));
-        else this.arrow([faceX - len - 0.3, it.z, v.y], [1, 0, 0], len, color, it.label || fmt(it.F));
+        if (lc === 'wy') this.arrow([v.x, it.z, faceZ + len + 0.3], [0, 0, -1], len, color, it.label === '' ? null : it.label || fmt(it.F));
+        else this.arrow([faceX - len - 0.3, it.z, v.y], [1, 0, 0], len, color, it.label === '' ? null : it.label || fmt(it.F));
       }
     } else if (res.typology === 'valla') {
       const g = res.geometry;

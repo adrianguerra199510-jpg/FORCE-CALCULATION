@@ -237,3 +237,48 @@ test('Volumen genérico: suma de franjas, columnas y elevación', () => {
   near(r.seismic.directions.X.W, 200 + 4 * 2 * 3);
   near(r.H, 7);
 });
+
+test('Tanque sin patas: ninguna carga de patas; tanque cuadrado', () => {
+  const p = defaultProject();
+  p.typology = 'tanque';
+  p.tanque.support = 'apoyado';
+  p.tanque.Hs = 0;
+  let r = compute(p);
+  assert.equal(r.wind.parts.length, 1);
+  assert.equal(r.seismic.directions.X.levels.length, 1);
+  assert.ok(!r.wind.parts.some((x) => /pata/i.test(x.name)));
+  assert.equal(r.seismic.directions.X.system.id.startsWith('G'), true);
+  // patas con n = 0 → apoyado, sin cargas de patas
+  p.tanque.support = 'patas';
+  p.tanque.nLegs = 0;
+  p.tanque.Hs = 12;
+  r = compute(p);
+  assert.equal(r.geometry.support, 'apoyado');
+  assert.equal(r.wind.parts.length, 1);
+  // cuadrado: volumen de agua a²·Hw y Cf de sección cuadrada
+  p.tanque.support = 'patas';
+  p.tanque.nLegs = 4;
+  p.tanque.shape = 'rect';
+  r = compute(p);
+  near(r.Ww, 9.81 * p.tanque.D * p.tanque.D * p.tanque.Hw);
+  near(r.wind.parts[0].Cf, W.cfChimney('square', Math.max(1, p.tanque.Ht / p.tanque.D)));
+});
+
+test('Techos de volúmenes: geometría, áreas proyectadas y Cp de domo', async () => {
+  const { roofGeometry, roofProjectedArea } = await import('../src/calc/typologies.js');
+  const v = { shape: 'rect', bx: 12, by: 8, h: 6, z0: 0, roof: 'dos', roofAngle: 45, roofDir: 'X' };
+  const rg = roofGeometry(v);
+  near(rg.rise, 4); // (8/2)·tan45
+  near(rg.hMean, 8);
+  near(roofProjectedArea(v, rg, 'X'), 0.5 * 8 * 4); // hastial triangular
+  near(roofProjectedArea(v, rg, 'Y'), 12 * 4);
+  const hip = roofGeometry({ ...v, roof: 'cuatro' });
+  near(hip.ridgeLen, 4);
+  near(roofProjectedArea({ ...v, roof: 'cuatro' }, hip, 'Y'), 0.5 * (12 + 4) * 4);
+  const dome = roofGeometry({ shape: 'cyl', bx: 10, h: 5, z0: 0, roof: 'domo', domeRise: 2 });
+  near(dome.top, 7);
+  const c = W.cpDome(5, 2.5, 10); // hD/D = 0.5, f/D = 0.25
+  near(c.B, -1.2);
+  near(c.C, -0.5);
+  near(W.cpDome(0, 5, 10).A, 0.8);
+});

@@ -375,70 +375,88 @@ export function computeTorre(project) {
 }
 
 // =============================================================================
-// TANQUE ELEVADO
+// TANQUE (elevado sobre patas o pedestal, o apoyado sin patas); cilíndrico o cuadrado
 // =============================================================================
 export function computeTanque(project) {
   const k = project.tanque;
-  const D = +k.D;
+  const square = k.shape === 'rect';
+  const D = +k.D; // diámetro o lado
   const Ht = +k.Ht;
   const Hw = Math.min(+k.Hw, Ht);
-  const Hs = +k.Hs;
+  const warnings = [];
+  let support = k.support;
+  if (support === 'patas' && (!(+k.nLegs > 0) || !(+k.Hs > 0))) {
+    support = 'apoyado';
+    warnings.push('El tanque no tiene patas (n.º de patas o altura de soporte igual a cero): se calcula como tanque apoyado, sin cargas en patas.');
+  }
+  if (support === 'pedestal' && !(+k.Hs > 0)) support = 'apoyado';
+  const onGround = support === 'apoyado';
+  const Hs = Math.max(0, +k.Hs || 0); // cota del fondo del tanque (para "apoyado": cota de la superficie de apoyo)
   const Htot = Hs + Ht;
-  const Ww = GAMMA_W * (Math.PI * D * D / 4) * Hw;
+  const Aplan = square ? D * D : (Math.PI * D * D) / 4;
+  const Ww = GAMMA_W * Aplan * Hw;
   const Wshell = +k.Wshell;
-  const Wsup = +k.Wsupport;
+  const Wsup = onGround ? 0 : +k.Wsupport;
   const Wtop = Wshell + Ww;
-  const zTop = Hs + (Wshell * (Ht / 2) + Ww * (Hw / 2)) / Math.max(Wtop, 1e-9);
-  const levels = [
-    { name: 'Estructura de soporte', h: Hs / 2, w: Wsup },
-    { name: 'Tanque + agua', h: zTop, w: Wtop },
-  ];
+  // alturas sísmicas medidas desde la base de la estructura (terreno o superficie de apoyo)
+  const base = onGround ? Hs : 0;
+  const zTop = Hs - base + (Wshell * (Ht / 2) + Ww * (Hw / 2)) / Math.max(Wtop, 1e-9);
+  const levels = onGround
+    ? [{ name: 'Tanque + agua', h: zTop, w: Wtop }]
+    : [{ name: support === 'pedestal' ? 'Pedestal' : 'Patas y arriostramiento', h: Hs / 2, w: Wsup }, { name: 'Tanque + agua', h: zTop, w: Wtop }];
   let T;
   let Tmethod;
-  if (k.periodMethod === 'rigidez') {
+  const pm = onGround && k.periodMethod === 'rigidez' ? 'rigida' : k.periodMethod;
+  if (pm === 'rigidez') {
     T = 2 * Math.PI * Math.sqrt((Wtop + 0.33 * Wsup) / (G_ACC * +k.K));
     Tmethod = 'T = 2π·√[(Wtanque + 0.33·Wsoporte)/(g·K)]';
+  } else if (pm === 'rigida') {
+    T = 0.05;
+    Tmethod = onGround ? 'Tanque apoyado considerado rígido (T < 0.06 s, §15.4.2)' : 'Rígido (T < 0.06 s, §15.4.2)';
   } else {
     T = +k.T;
     Tmethod = 'Período ingresado por el usuario';
   }
   const p = seismicCommon(project);
-  const warnings = stdWarnings(p, project);
-  const sys = findSystem(k.system);
-  const r = S.equivalentLateralForce({ p, system: sys, hn: Htot, Tuser: T, levels, kind: 'nonbuildingNotSimilar' });
+  warnings.unshift(...stdWarnings(p, project));
+  let sys = findSystem(k.system);
+  if (onGround && !sys.id.startsWith('G')) sys = findSystem('G1');
+  if (!onGround && sys.id.startsWith('G')) sys = findSystem('T1');
+  const r = S.equivalentLateralForce({ p, system: sys, hn: Htot - base, Tuser: T, levels, kind: 'nonbuildingNotSimilar' });
   r.Tsource = Tmethod;
   const seismic = { params: p, directions: { X: r } };
   warnings.push('No se incluye el componente convectivo (oleaje) del líquido; verificar según ASCE 7-05 §15.7.6 si aplica.');
+  if (onGround && Hs > 0) warnings.push(`Tanque apoyado a ${Hs.toFixed(2)} m sobre el terreno: el viento se evalúa a su altura real; si descansa sobre una edificación, sus reacciones deben incluirse en el diseño de ésta (§15.3).`);
 
-  const ctx = windCtx(project, W.KD.chimneyRound);
+  const ctx = windCtx(project, square ? W.KD.chimneySquare : W.KD.chimneyRound);
   const gust = W.gustFactor({ exposure: ctx.exposure, h: Htot, B: D, L: D, n1: 1 / T, beta: +project.wind.beta || 0.02, V: ctx.V, rigidMode: project.wind.rigidMode });
   const G = gust.G;
   const qv = W.integrateQ(Hs, Htot, ctx) / Ht;
-  const cfV = W.cfChimney('round', Math.max(1, Ht / D), k.surface || 'moderadamente liso', D * Math.sqrt(qv * 1000));
-  const Fv = qv * G * cfV * D * Ht;
-  const zv = Hs + Ht / 2;
-  let supp;
-  if (k.support === 'pedestal') {
+  const cfV = square
+    ? W.cfChimney('square', Math.max(1, Ht / D))
+    : W.cfChimney('round', Math.max(1, Ht / D), k.surface || 'moderadamente liso', D * Math.sqrt(qv * 1000));
+  const vessel = { name: square ? 'Recipiente cuadrado (viento normal a la cara)' : 'Recipiente cilíndrico', q: qv, Cf: cfV, Af: D * Ht, F: qv * G * cfV * D * Ht, z: Hs + Ht / 2 };
+  const parts = [vessel];
+  if (support === 'pedestal') {
     const Dp = +k.Dped;
     const qs = W.integrateQ(0, Hs, ctx) / Hs;
     const cf = W.cfChimney('round', Hs / Dp, 'moderadamente liso', Dp * Math.sqrt(qs * 1000));
-    supp = { name: 'Pedestal', q: qs, Cf: cf, Af: Dp * Hs, F: qs * G * cf * Dp * Hs, z: Hs / 2 };
-  } else {
+    parts.push({ name: 'Pedestal', q: qs, Cf: cf, Af: Dp * Hs, F: qs * G * cf * Dp * Hs, z: Hs / 2 });
+  } else if (support === 'patas') {
     const dl = +k.dLeg;
     const nL = Math.round(+k.nLegs);
     const qs = W.integrateQ(0, Hs, ctx) / Hs;
     const cf = W.cfChimney('round', Hs / dl, 'moderadamente liso', dl * Math.sqrt(qs * 1000));
-    supp = { name: `${nL} patas Ø${dl.toFixed(2)} m (sin apantallamiento)`, q: qs, Cf: cf, Af: nL * dl * Hs, F: qs * G * cf * nL * dl * Hs, z: Hs / 2 };
+    parts.push({ name: `${nL} patas Ø${dl.toFixed(2)} m (sin apantallamiento)`, q: qs, Cf: cf, Af: nL * dl * Hs, F: qs * G * cf * nL * dl * Hs, z: Hs / 2 });
     warnings.push('Viento sobre patas: no se considera arriostramiento ni apantallamiento (conservador). Agregar el área de riostras si es significativa.');
   }
-  const vessel = { name: 'Recipiente', q: qv, Cf: cfV, Af: D * Ht, F: Fv, z: zv };
-  const Vbase = vessel.F + supp.F;
-  const Mbase = vessel.F * vessel.z + supp.F * supp.z;
+  const Vbase = sum(parts, (x) => x.F);
+  const Mbase = sum(parts, (x) => x.F * (x.z - base));
   return {
     typology: 'tanque', H: Htot, levels, T, Ww, Wtop, seismic, warnings,
-    wind: { ctx, gust, G, parts: [vessel, supp], Vbase, Mbase },
+    wind: { ctx, gust, G, parts, Vbase, Mbase, base },
     combos: S.loadCombinations(p.SDS),
-    geometry: { D, Ht, Hw, Hs, support: k.support, nLegs: +k.nLegs, dLeg: +k.dLeg, Dped: +k.Dped },
+    geometry: { square, D, Ht, Hw, Hs, support, nLegs: +k.nLegs, dLeg: +k.dLeg, Dped: +k.Dped },
   };
 }
 
@@ -567,6 +585,117 @@ export function computeValla(project) {
   };
 }
 
+
+// ---------------------------------------------------------------- techos de volúmenes
+const ROOF_LABEL = { plano: 'Plano', una: 'A una agua', dos: 'A dos aguas', cuatro: 'A cuatro aguas', domo: 'Domo' };
+export { ROOF_LABEL };
+
+/** Geometría del techo de un volumen: flecha, cumbrera, altura media y cota máxima. */
+export function roofGeometry(v) {
+  const eave = +v.z0 + +v.h;
+  const t = Math.tan(((+v.roofAngle || 0) * Math.PI) / 180);
+  const cyl = v.shape === 'cyl';
+  let type = v.roof || 'plano';
+  if (cyl && type !== 'domo') type = 'plano';
+  if (!cyl && type === 'domo') type = 'plano';
+  let rise = 0;
+  let ridgeDir = v.roofDir === 'Y' ? 'Y' : 'X';
+  let ridgeLen = 0;
+  if (type === 'dos') rise = ((ridgeDir === 'X' ? +v.by : +v.bx) / 2) * t;
+  else if (type === 'cuatro') {
+    const a = Math.min(+v.bx, +v.by);
+    rise = (a / 2) * t;
+    ridgeDir = +v.bx >= +v.by ? 'X' : 'Y';
+    ridgeLen = Math.abs(+v.bx - +v.by);
+  } else if (type === 'una') rise = (ridgeDir === 'X' ? +v.bx : +v.by) * t; // la pendiente sube hacia +X o +Y
+  else if (type === 'domo') rise = Math.min(Math.max(+v.domeRise || 0, 0), +v.bx / 2);
+  const theta = +v.roofAngle || 0;
+  const hMean = type === 'domo' ? eave + rise : type === 'plano' || theta <= 10 ? eave : eave + rise / 2;
+  return { type, rise, eave, top: eave + rise, hMean, ridgeDir, ridgeLen, theta };
+}
+
+function circleSegmentArea(D, f) {
+  if (!(f > 0)) return 0;
+  const R = (D * D / 4 + f * f) / (2 * f);
+  return R * R * Math.acos((R - f) / R) - (R - f) * Math.sqrt(Math.max(0, 2 * R * f - f * f));
+}
+
+/** Área del techo proyectada sobre el plano normal al viento (dir = 'X' o 'Y'). */
+export function roofProjectedArea(v, rg, dir) {
+  const bperp = dir === 'X' ? +v.by : +v.bx;
+  switch (rg.type) {
+    case 'dos': return rg.ridgeDir === dir ? 0.5 * bperp * rg.rise : bperp * rg.rise;
+    case 'cuatro': return rg.ridgeDir === dir ? 0.5 * bperp * rg.rise : 0.5 * (bperp + rg.ridgeLen) * rg.rise;
+    case 'una': return rg.ridgeDir === dir ? bperp * rg.rise : 0.5 * (dir === 'X' ? +v.bx : +v.by) * rg.rise;
+    case 'domo': return circleSegmentArea(+v.bx, rg.rise);
+    default: return 0;
+  }
+}
+
+/**
+ * Presiones de techo de un volumen sólido para viento en 'dir' (Fig. 6-6 / 6-7).
+ * Devuelve filas por superficie con p externa y neta (±GCpi) y la succión vertical aproximada.
+ */
+export function roofPressures(v, rg, dir, ctx, G, gcpi) {
+  const q = W.qz(rg.type === 'domo' ? rg.top : rg.hMean, ctx).q;
+  const L = rg.type === 'domo' ? +v.bx : dir === 'X' ? +v.bx : +v.by; // dimensión paralela al viento
+  const B = rg.type === 'domo' ? +v.bx : dir === 'X' ? +v.by : +v.bx;
+  const hL = rg.hMean / L;
+  const rows = [];
+  const add = (face, Cp, area, caseCp = '') => rows.push({ face, caseCp, Cp, q, pe: q * G * Cp, pPos: q * G * Cp - q * gcpi, pNeg: q * G * Cp + q * gcpi, area });
+  const zones = () => W.cpRoofZones(rg.hMean, hL, L).forEach((z) => {
+    add(`Techo ${z.x0.toFixed(1)}–${z.x1.toFixed(1)} m`, z.A, (z.x1 - z.x0) * B, 'A');
+    add(`Techo ${z.x0.toFixed(1)}–${z.x1.toFixed(1)} m`, z.B, (z.x1 - z.x0) * B, 'B');
+  });
+  const normal = rg.theta >= 10;
+  if (rg.type === 'domo') {
+    const c = W.cpDome(rg.eave, rg.rise, +v.bx);
+    add('Domo – A (borde de barlovento)', c.A, 0);
+    add('Domo – B (cima)', c.B, 0);
+    add('Domo – C (borde de sotavento)', c.C, 0);
+    const Cm = (c.A + 2 * c.B + c.C) / 4;
+    const Aplan = (Math.PI * +v.bx * +v.bx) / 4;
+    return { rows, q, hL, hDD: c.hDD, fD: c.fD, uplift: -Math.min(0, q * G * Cm - q * gcpi) * Aplan, note: 'Succión vertical aproximada con Cp medio = (A + 2B + C)/4 sobre el área en planta (Fig. 6-7, caso A).' };
+  }
+  if (rg.type === 'plano' || !normal) zones();
+  else if (rg.type === 'dos' || rg.type === 'cuatro') {
+    const ridgeNormal = rg.ridgeDir !== dir;
+    if (rg.type === 'dos' && !ridgeNormal) zones();
+    else {
+      const ww = W.cpRoofWindward(rg.theta, hL);
+      const lw = W.cpRoofLeeward(rg.theta, hL);
+      const half = (L / 2) * B;
+      add('Faldón de barlovento', ww.A, half, 'A');
+      add('Faldón de barlovento', ww.B, half, 'B');
+      add('Faldón de sotavento', lw, half);
+      if (rg.type === 'cuatro' && !ridgeNormal) {
+        // viento paralelo a la cumbrera: los faldones laterales se evalúan con la zona a L/2
+        const zs = W.cpRoofZones(rg.hMean, hL, L);
+        const mid = zs.find((z) => z.x0 <= L / 2 && z.x1 >= L / 2) || zs[zs.length - 1];
+        add('Faldones laterales', mid.A, 0);
+      }
+    }
+  } else if (rg.type === 'una') {
+    const ww = W.cpRoofWindward(rg.theta, hL);
+    const lw = W.cpRoofLeeward(rg.theta, hL);
+    const A = L * B;
+    if (rg.ridgeDir === dir) {
+      add('Techo (viento hacia el alero bajo: barlovento)', ww.A, A, 'A');
+      add('Techo (viento hacia el alero bajo: barlovento)', ww.B, A, 'B');
+      add('Techo (viento hacia el alero alto: sotavento)', lw, A);
+    } else zones();
+  }
+  // succión vertical: peor combinación por superficie (sólo filas con área)
+  const byFace = {};
+  for (const r of rows) {
+    if (!r.area) continue;
+    const pn = Math.min(r.pPos, r.pNeg);
+    byFace[r.face] = Math.min(byFace[r.face] ?? 0, pn * r.area);
+  }
+  const uplift = -Object.values(byFace).reduce((a, b) => a + Math.min(0, b), 0);
+  return { rows, q, hL, uplift, note: 'Succión vertical: suma de la presión neta más desfavorable de cada superficie por su área en planta.' };
+}
+
 // =============================================================================
 // VOLUMEN GENÉRICO: lista de cuerpos (prisma o cilindro, sólidos o abiertos),
 // a cualquier cota sobre el terreno y con columnas de apoyo opcionales.
@@ -577,7 +706,8 @@ export function computeGenerico(project) {
   const vols = (gp.volumes || []).filter((v) => +v.h > 0 && +v.bx > 0 && (v.shape === 'cyl' || +v.by > 0));
   if (!vols.length) throw new Error('Agrega al menos un volumen con dimensiones mayores que cero.');
   const nS = Math.max(1, Math.round(+gp.slices || 4));
-  const top = Math.max(...vols.map((v) => +v.z0 + +v.h));
+  const rgs = new Map(vols.map((v) => [v, roofGeometry(v)]));
+  const top = Math.max(...vols.map((v) => rgs.get(v).top));
 
   // ---- masas
   const levels = [];
@@ -650,6 +780,14 @@ export function computeGenerico(project) {
         const Af = (open ? +v.eps : 1) * bperp * dz;
         rows.push({ vol: v.name, z0, z1, zc: (z0 + z1) / 2, Kz: W.Kz((z0 + z1) / 2, ctx.exposure), qz: q, Kd, Cf, fig, Af, F: q * G * Cf * Af });
       }
+      const rg = rgs.get(v);
+      const Ar = roofProjectedArea(v, rg, dir) * (open ? +v.eps : 1);
+      if (Ar > 0) {
+        const zr = rg.eave + rg.rise / 3;
+        const q = W.qz(zr, ctx).q;
+        const Cf = rows[rows.length - 1].Cf;
+        rows.push({ vol: v.name, roof: true, z0: rg.eave, z1: rg.top, zc: zr, Kz: W.Kz(zr, ctx.exposure), qz: q, Kd, Cf, fig: `techo ${ROOF_LABEL[rg.type].toLowerCase()}`, Af: Ar, F: q * G * Cf * Ar });
+      }
       if (+v.nCols > 0 && +v.z0 > 0) {
         const q = W.integrateQ(0, +v.z0, ctx0) / +v.z0;
         const d = +v.dCol;
@@ -663,7 +801,9 @@ export function computeGenerico(project) {
     const Aproj = sum(rows, (x) => x.Af) + sum(cols, (x) => x.Af);
     const Vmin = W.MIN_WIND_PRESSURE * Aproj;
     if (Vbase < Vmin) warnings.push(`Viento ${dir}: el cortante (${Vbase.toFixed(1)} kN) es menor que la carga mínima de 0.48 kPa sobre el área proyectada (${Vmin.toFixed(1)} kN, §6.1.4.1).`);
-    wind.directions[dir] = { ctx: ctx0, gust, G, rows, cols, Vbase, Mbase, Vmin };
+    const roofs = vols.filter((v) => v.tipo !== 'abierto' && (rgs.get(v).type !== 'plano' || v.shape !== 'cyl'))
+      .map((v) => ({ vol: v.name, type: rgs.get(v).type, ...roofPressures(v, rgs.get(v), dir, ctx0, G, W.GCPI[project.wind.enclosure]) }));
+    wind.directions[dir] = { ctx: ctx0, gust, G, rows, cols, Vbase, Mbase, Vmin, roofs };
   }
   wind.ctx = wind.directions.X.ctx;
   if (vols.some((v) => v.shape !== 'cyl' && v.tipo !== 'abierto' && Math.abs(+v.bx / +v.by - 1) > 0.25)) {
@@ -674,7 +814,7 @@ export function computeGenerico(project) {
   return {
     typology: 'generico', H: top, levels, seismic, wind, warnings,
     combos: S.loadCombinations(p.SDS),
-    geometry: { volumes: vols.map((v) => ({ ...v, bx: +v.bx, by: +v.by, h: +v.h, z0: +v.z0, x: +v.x || 0, y: +v.y || 0, nCols: +v.nCols || 0, dCol: +v.dCol, eps: +v.eps })), top },
+    geometry: { volumes: vols.map((v) => ({ ...v, bx: +v.bx, by: +v.by, h: +v.h, z0: +v.z0, x: +v.x || 0, y: +v.y || 0, nCols: +v.nCols || 0, dCol: +v.dCol, eps: +v.eps, rg: rgs.get(v) })), top },
   };
 }
 
@@ -717,7 +857,7 @@ export function defaultProject() {
       periodMethod: 'manual', T: 0.8, EIbase: 2.0e7, EItop: 2.0e6, system: 'S1',
     },
     tanque: {
-      D: 6, Ht: 5, Hw: 4.5, Hs: 20, support: 'patas', nLegs: 4, dLeg: 0.4, Dped: 3,
+      shape: 'cyl', D: 6, Ht: 5, Hw: 4.5, Hs: 20, support: 'patas', nLegs: 4, dLeg: 0.4, Dped: 3,
       Wshell: 250, Wsupport: 300, periodMethod: 'rigidez', K: 6000, T: 1.0, system: 'T1', surface: 'moderadamente liso',
     },
     valla: {
@@ -729,8 +869,8 @@ export function defaultProject() {
     generico: {
       system: 'P1', periodMethod: 'manual', T: 0.4, slices: 4, surface: 'moderadamente liso',
       volumes: [
-        { name: 'Cuerpo principal', shape: 'rect', bx: 12, by: 8, h: 6, z0: 5, x: 0, y: 0, tipo: 'solido', eps: 1, W: 900, nCols: 6, dCol: 0.5, wCol: 5 },
-        { name: 'Cuerpo superior', shape: 'cyl', bx: 4, by: 4, h: 5, z0: 11, x: 3, y: 0, tipo: 'abierto', eps: 0.3, W: 60, nCols: 0, dCol: 0.3, wCol: 1 },
+        { name: 'Cuerpo principal', shape: 'rect', bx: 12, by: 8, h: 6, z0: 5, x: 0, y: 0, tipo: 'solido', eps: 1, W: 900, nCols: 6, dCol: 0.5, wCol: 5, roof: 'dos', roofAngle: 20, roofDir: 'X', domeRise: 0 },
+        { name: 'Cuerpo superior', shape: 'cyl', bx: 4, by: 4, h: 4, z0: 13.2, x: 3, y: 0, tipo: 'solido', eps: 1, W: 60, nCols: 0, dCol: 0.3, wCol: 1, roof: 'domo', roofAngle: 0, roofDir: 'X', domeRise: 1.2 },
       ],
     },
   };

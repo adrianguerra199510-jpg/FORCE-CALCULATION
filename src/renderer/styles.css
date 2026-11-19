@@ -124,12 +124,13 @@ label.inline select, label.inline input[type=number] { width: auto; }
 .viewer-legend b { color: var(--ink); font-family: var(--num); }
 
 /* ---------------- mapa */
-.mapview { flex: 1; display: grid; grid-template-columns: 1fr minmax(300px, 38%); min-height: 0; }
-.map-left { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--line-soft); }
+.mapview { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); min-height: 0; }
+.map-left { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-bottom: 2px solid var(--line); }
 .map-toolbar { display: flex; gap: 10px; align-items: center; padding: 8px 12px; flex-wrap: wrap; border-bottom: 1px solid var(--line-soft); }
 .map-toolbar label.inline input { width: 92px; }
 .map-toolbar select { width: auto; }
-.map-stage { flex: 1; position: relative; min-height: 0; cursor: crosshair; }
+.map-stage { flex: 1; position: relative; min-height: 0; cursor: crosshair; overflow: hidden; touch-action: none; }
+.map-stage.dragging, .sheet-view.dragging, .sheet-view.dragging img { cursor: grabbing; }
 .map-stage canvas, .map-stage svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .overlay path.pa { fill: none; stroke: #1C2A33; stroke-width: 1.2; }
 .overlay path.nb { fill: rgba(170,180,182,0.55); stroke: #8E9CA0; stroke-width: 0.8; }
@@ -145,8 +146,9 @@ label.inline select, label.inline input[type=number] { width: auto; }
 .map-right { display: flex; flex-direction: column; min-height: 0; }
 .sheet-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); flex-wrap: wrap; }
 .sheet-head .zoom { margin-left: auto; display: flex; gap: 4px; }
+.sheet-head .hint, .map-toolbar .hint { color: var(--muted); font-size: 12px; }
 .sheet-tabs { display: flex; gap: 4px; }
-.sheet-view { flex: 1; overflow: auto; position: relative; background: #f6f8f8; min-height: 0; }
+.sheet-view { flex: 1; overflow: auto; position: relative; background: #f6f8f8; min-height: 0; touch-action: none; user-select: none; }
 .sheet-canvas { position: relative; }
 .sheet-canvas img { display: block; cursor: crosshair; }
 .sheet-pin { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border: 3px solid var(--quake); border-radius: 50%; pointer-events: none; box-shadow: 0 0 0 2px #fff; }

@@ -1,6 +1,6 @@
 // Construye el modelo de reporte (bloques) a partir del proyecto, resultados e imágenes.
 import { REFERENCES, REP } from '../calc/rep.js';
-import { TYPOLOGIES } from '../calc/typologies.js';
+import { TYPOLOGIES, ROOF_LABEL } from '../calc/typologies.js';
 import { SITE_CLASSES } from '../calc/seismic.js';
 import { EXPOSURE, GCPI, TOPO_TYPES } from '../calc/wind.js';
 import { OCCUPANCY } from './forms.js';
@@ -203,8 +203,9 @@ function describeGeometry(res, project, kv, table) {
       ['Segmentos de cálculo', String(g.nSeg)],
     ]);
   } else if (res.typology === 'generico') {
-    table('Volúmenes que componen la estructura', ['Volumen', 'Forma', 'Tipo', 'Dimensiones (m)', 'Cota base (m)', 'Centro X, Y (m)', 'W (kN)', 'Columnas'],
+    table('Volúmenes que componen la estructura', ['Volumen', 'Forma', 'Tipo', 'Techo', 'Dimensiones (m)', 'Cota base (m)', 'Centro X, Y (m)', 'W (kN)', 'Columnas'],
       g.volumes.map((v) => [v.name, v.shape === 'cyl' ? 'Cilindro' : 'Prisma', v.tipo === 'abierto' ? `Abierto ε = ${f(v.eps, 2)}` : 'Sólido',
+        v.rg.type === 'plano' ? 'Plano' : v.rg.type === 'domo' ? `Domo f = ${f(v.rg.rise, 2)} m` : `${ROOF_LABEL[v.rg.type]} θ = ${f(v.rg.theta, 1)}°${v.rg.type !== 'cuatro' ? ` (${v.rg.type === 'una' ? 'sube hacia +' : 'cumbrera ∥ '}${v.rg.ridgeDir})` : ''}, flecha ${f(v.rg.rise, 2)} m`,
         v.shape === 'cyl' ? `Ø${f(v.bx, 2)} × ${f(v.h, 2)}` : `${f(v.bx, 2)} × ${f(v.by, 2)} × ${f(v.h, 2)}`, f(v.z0, 2), `${f(v.x, 2)}, ${f(v.y, 2)}`, f(v.W, 1),
         v.nCols > 0 && v.z0 > 0 ? `${v.nCols} × Ø${f(v.dCol, 2)} m` : '—']));
     kv([['Altura total', `${f(g.top, 2)} m`]]);
@@ -220,9 +221,10 @@ function describeGeometry(res, project, kv, table) {
     ]);
   } else if (res.typology === 'tanque') {
     kv([
-      ['Diámetro / altura del tanque', `${f(g.D, 2)} m / ${f(g.Ht, 2)} m`],
-      ['Altura de agua / volumen', `${f(g.Hw, 2)} m / ${f((Math.PI * g.D * g.D / 4) * g.Hw, 1)} m³`],
-      ['Altura del soporte', `${f(g.Hs, 2)} m (${g.support === 'pedestal' ? 'pedestal' : `${g.nLegs} patas`})`],
+      ['Forma', g.square ? 'Cuadrado' : 'Cilíndrico'],
+      [g.square ? 'Lado / altura del tanque' : 'Diámetro / altura del tanque', `${f(g.D, 2)} m / ${f(g.Ht, 2)} m`],
+      ['Altura de agua / volumen', `${f(g.Hw, 2)} m / ${f((g.square ? g.D * g.D : Math.PI * g.D * g.D / 4) * g.Hw, 1)} m³`],
+      ['Soporte', g.support === 'apoyado' ? `Sin patas: apoyado directamente${g.Hs > 0 ? ` a ${f(g.Hs, 2)} m sobre el terreno` : ' sobre el terreno'}` : g.support === 'pedestal' ? `Pedestal Ø${f(g.Dped, 2)} m, altura ${f(g.Hs, 2)} m` : `${g.nLegs} patas Ø${f(g.dLeg, 2)} m, altura ${f(g.Hs, 2)} m`],
       ['Peso del agua', `${f(res.Ww, 1)} kN`],
     ]);
   }
@@ -295,6 +297,12 @@ function windSection(res, project, { h2, h3, kv, table, eq, para, note }) {
       kv([...gustRows(d.gust), ['Cortante basal', `${f(d.Vbase, 1)} kN`], ['Momento de volteo', `${f(d.Mbase, 1)} kN·m`], ['Carga mínima 0.48 kPa·A proyectada', `${f(d.Vmin, 1)} kN`, '§6.1.4.1']]);
       table(`Fuerzas de viento por franja – dirección ${dir}`, ['Volumen', 'z (m)', 'Kz', 'q̄z (kPa)', 'Kd', 'Cf', 'Af (m²)', 'F (kN)'],
         [...d.rows].reverse().map((r) => [r.vol, `${f(r.z0, 2)}–${f(r.z1, 2)}`, f(r.Kz, 3), f(r.qz, 4), f(r.Kd, 2), `${f(r.Cf, 3)} (${r.fig})`, f(r.Af, 2), f(r.F, 2)]));
+      for (const rf of d.roofs || []) {
+        table(`Presiones en el techo de "${rf.vol}" (${ROOF_LABEL[rf.type].toLowerCase()}) – viento ${dir}; q = ${f(rf.q, 4)} kPa, ${rf.type === 'domo' ? `hD/D = ${f(rf.hDD, 2)}, f/D = ${f(rf.fD, 3)}` : `h/L = ${f(rf.hL, 3)}`}`,
+          ['Superficie', 'Caso', 'Cp', 'p ext. (kPa)', 'p +GCpi (kPa)', 'p −GCpi (kPa)'],
+          rf.rows.map((r) => [r.face, r.caseCp || '—', f(r.Cp, 2), f(r.pe, 3), f(r.pPos, 3), f(r.pNeg, 3)]));
+        para(`Succión vertical aproximada sobre el techo de "${rf.vol}": ${f(rf.uplift, 1)} kN. ${rf.note} Coeficientes: ${rf.type === 'domo' ? 'Fig. 6-7 (domos)' : 'Fig. 6-6'}.`);
+      }
       if (d.cols.length) table(`Columnas de apoyo – dirección ${dir}`, ['Volumen', 'Columnas', 'q̄z (kPa)', 'Cf', 'Af (m²)', 'F (kN)'], d.cols.map((c) => [c.vol, `${c.n} × Ø${f(c.d, 2)} m`, f(c.qz, 4), f(c.Cf, 3), f(c.Af, 2), f(c.F, 2)]));
     }
   } else if (res.typology === 'valla') {
@@ -326,7 +334,7 @@ function windSection(res, project, { h2, h3, kv, table, eq, para, note }) {
   } else if (res.typology === 'tanque') {
     const d = res.wind;
     kv([...gustRows(d.gust), ['Cortante basal', `${f(d.Vbase, 1)} kN`], ['Momento de volteo', `${f(d.Mbase, 1)} kN·m`]]);
-    eq('F = q̄z·G·Cf·Af ;  Cf según Fig. 6-21 (sección circular)');
+    eq(`F = q̄z·G·Cf·Af ;  Cf según Fig. 6-21 (sección ${res.geometry.square ? 'cuadrada' : 'circular'})`);
     table('Fuerzas de viento por componente', ['Componente', 'z (m)', 'q̄z (kPa)', 'Cf', 'Af (m²)', 'F (kN)'], d.parts.map((x) => [x.name, f(x.z, 2), f(x.q, 4), f(x.Cf, 3), f(x.Af, 2), f(x.F, 2)]));
   }
 }

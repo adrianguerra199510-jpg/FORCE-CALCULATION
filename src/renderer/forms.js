@@ -130,21 +130,24 @@ export const SECTIONS = {
       { path: 'generico.surface', label: 'Superficie de cuerpos cilíndricos', type: 'select', options: [{ value: 'moderadamente liso', label: 'Moderadamente lisa' }, { value: 'rugoso', label: 'Rugosa' }, { value: 'muy rugoso', label: 'Muy rugosa' }] },
     ],
     tanque: [
-      { path: 'tanque.D', label: 'Diámetro del tanque', unit: 'm', type: 'number', step: 0.1 },
+      { path: 'tanque.shape', label: 'Forma del tanque', type: 'select', options: [{ value: 'cyl', label: 'Cilíndrico' }, { value: 'rect', label: 'Cuadrado' }] },
+      { path: 'tanque.D', label: 'Diámetro / lado del tanque', unit: 'm', type: 'number', step: 0.1 },
       { path: 'tanque.Ht', label: 'Altura del tanque', unit: 'm', type: 'number', step: 0.1 },
       { path: 'tanque.Hw', label: 'Altura de agua', unit: 'm', type: 'number', step: 0.1 },
-      { path: 'tanque.Hs', label: 'Altura del soporte', unit: 'm', type: 'number', step: 0.1 },
-      { path: 'tanque.support', label: 'Soporte', type: 'select', options: [{ value: 'patas', label: 'Patas (columnas)' }, { value: 'pedestal', label: 'Pedestal único' }] },
+      { path: 'tanque.support', label: 'Soporte', type: 'select', options: [{ value: 'patas', label: 'Elevado sobre patas (columnas)' }, { value: 'pedestal', label: 'Elevado sobre pedestal único' }, { value: 'apoyado', label: 'Sin patas: apoyado directamente' }] },
+      { path: 'tanque.Hs', label: 'Altura del soporte / cota de apoyo', unit: 'm', type: 'number', step: 0.1 },
       { path: 'tanque.nLegs', label: 'Número de patas', type: 'number', step: 1, showIf: (p) => p.tanque.support === 'patas' },
       { path: 'tanque.dLeg', label: 'Diámetro de patas', unit: 'm', type: 'number', step: 0.05, showIf: (p) => p.tanque.support === 'patas' },
       { path: 'tanque.Dped', label: 'Diámetro del pedestal', unit: 'm', type: 'number', step: 0.1, showIf: (p) => p.tanque.support === 'pedestal' },
       { path: 'tanque.Wshell', label: 'Peso del tanque vacío', unit: 'kN', type: 'number' },
-      { path: 'tanque.Wsupport', label: 'Peso del soporte', unit: 'kN', type: 'number' },
-      { path: 'tanque.system', label: 'Sistema (Tabla 15.4-2)', type: 'select', options: sysOpts(NONBUILDING_SYSTEMS.filter((s) => s.group === 'Tanques elevados')) },
-      { path: 'tanque.periodMethod', label: 'Período fundamental', type: 'select', options: [{ value: 'rigidez', label: 'Desde la rigidez lateral K' }, { value: 'manual', label: 'Ingresar T' }] },
-      { path: 'tanque.K', label: 'Rigidez lateral del soporte K', unit: 'kN/m', type: 'number', showIf: (p) => p.tanque.periodMethod === 'rigidez' },
+      { path: 'tanque.Wsupport', label: 'Peso del soporte', unit: 'kN', type: 'number', showIf: (p) => p.tanque.support !== 'apoyado' },
+      { path: 'tanque.system', label: 'Sistema (Tabla 15.4-2)', type: 'select', options: sysOpts(NONBUILDING_SYSTEMS.filter((s) => s.group === 'Tanques elevados')), showIf: (p) => p.tanque.support !== 'apoyado' },
+      { path: 'tanque.system', label: 'Sistema (Tabla 15.4-2)', type: 'select', options: sysOpts(NONBUILDING_SYSTEMS.filter((s) => s.group === 'Tanques apoyados en el terreno')), showIf: (p) => p.tanque.support === 'apoyado' },
+      { path: 'tanque.periodMethod', label: 'Período fundamental', type: 'select', options: [{ value: 'rigidez', label: 'Desde la rigidez lateral K' }, { value: 'rigida', label: 'Rígido (T < 0.06 s)' }, { value: 'manual', label: 'Ingresar T' }] },
+      { path: 'tanque.K', label: 'Rigidez lateral del soporte K', unit: 'kN/m', type: 'number', showIf: (p) => p.tanque.periodMethod === 'rigidez' && p.tanque.support !== 'apoyado' },
       { path: 'tanque.T', label: 'T', unit: 's', type: 'number', step: 0.01, showIf: (p) => p.tanque.periodMethod === 'manual' },
     ],
+
   },
 };
 
@@ -190,6 +193,10 @@ export function renderFields(container, fields, project, onChange) {
         parent.appendChild(op);
       }
       input.value = String(val);
+      if (input.selectedIndex < 0 && f.options.length) {
+        input.value = String(f.options[0].value);
+        setPath(project, f.path, typeof val === 'number' ? Number(input.value) : input.value);
+      }
     } else if (f.type === 'textarea') {
       input = document.createElement('textarea');
       input.rows = 3;
@@ -250,6 +257,10 @@ const VOL_FIELDS = [
   ['x', 'Posición X del centro', 'number', 'm'],
   ['y', 'Posición Y del centro', 'number', 'm'],
   ['eps', 'Solidez ε', 'number', '', (v) => v.tipo === 'abierto'],
+  ['roof', 'Techo', 'select', (v) => (v.shape === 'cyl' ? [['plano', 'Plano'], ['domo', 'Domo']] : [['plano', 'Plano'], ['una', 'A una agua'], ['dos', 'A dos aguas'], ['cuatro', 'A cuatro aguas']])],
+  ['roofAngle', 'Inclinación del techo', 'number', '°', (v) => ['una', 'dos', 'cuatro'].includes(v.roof) && v.shape !== 'cyl'],
+  ['roofDir', 'Orientación', 'select', (v) => (v.roof === 'una' ? [['X', 'Sube hacia +X'], ['Y', 'Sube hacia +Y']] : [['X', 'Cumbrera paralela a X'], ['Y', 'Cumbrera paralela a Y']]), (v) => ['una', 'dos'].includes(v.roof) && v.shape !== 'cyl'],
+  ['domeRise', 'Flecha del domo f', 'number', 'm', (v) => v.roof === 'domo' && v.shape === 'cyl'],
   ['W', 'Peso sísmico', 'number', 'kN'],
   ['nCols', 'Columnas de apoyo', 'number', 'n.º', (v) => +v.z0 > 0],
   ['dCol', 'Diámetro de columna', 'number', 'm', (v) => +v.z0 > 0 && +v.nCols > 0],
@@ -263,7 +274,11 @@ export function renderVolumes(container, project, onChange) {
     <fieldset class="vol" data-i="${i}">
       <legend>${esc(v.name) || 'Volumen ' + (i + 1)}</legend>
       <div class="vol-grid">${VOL_FIELDS.filter((f) => !f[4] || f[4](v)).map(([k, label, type, extra]) => {
-        if (type === 'select') return `<label>${label}<select data-k="${k}">${extra.map(([val, l]) => `<option value="${val}" ${v[k] === val ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
+        if (type === 'select') {
+          const optsList = typeof extra === 'function' ? extra(v) : extra;
+          if (!optsList.some(([val]) => val === v[k])) v[k] = optsList[0][0];
+          return `<label>${label}<select data-k="${k}">${optsList.map(([val, l]) => `<option value="${val}" ${v[k] === val ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
+        }
         return `<label>${label}${extra ? ` <span class="unit">${extra}</span>` : ''}<input data-k="${k}" type="${type}" ${type === 'number' ? 'step="any"' : ''} value="${esc(v[k])}"></label>`;
       }).join('')}</div>
       <div class="vol-actions"><button class="btn small" data-dup="${i}">Duplicar</button><button class="btn small" data-del="${i}" ${list.length < 2 ? 'disabled' : ''}>Quitar</button></div>
@@ -276,7 +291,7 @@ export function renderVolumes(container, project, onChange) {
       const isSel = inp.tagName === 'SELECT';
       inp.addEventListener(isSel ? 'change' : 'input', () => {
         v[k] = inp.type === 'number' ? (inp.value === '' ? 0 : Number(inp.value)) : inp.value;
-        const structural = isSel || k === 'z0' || k === 'nCols';
+        const structural = isSel || k === 'z0' || k === 'nCols' || k === 'roof';
         if (k === 'name') fs.querySelector('legend').textContent = v.name;
         onChange(structural);
       });
@@ -290,7 +305,7 @@ export function renderVolumes(container, project, onChange) {
   }));
   container.querySelector('#addVol').addEventListener('click', () => {
     const top = Math.max(0, ...list.map((v) => +v.z0 + +v.h));
-    list.push({ name: `Volumen ${list.length + 1}`, shape: 'rect', bx: 4, by: 4, h: 3, z0: top, x: 0, y: 0, tipo: 'solido', eps: 1, W: 50, nCols: 0, dCol: 0.3, wCol: 1 });
+    list.push({ name: `Volumen ${list.length + 1}`, shape: 'rect', bx: 4, by: 4, h: 3, z0: top, x: 0, y: 0, tipo: 'solido', eps: 1, W: 50, nCols: 0, dCol: 0.3, wCol: 1, roof: 'plano', roofAngle: 15, roofDir: 'X', domeRise: 1 });
     onChange(true);
   });
 }

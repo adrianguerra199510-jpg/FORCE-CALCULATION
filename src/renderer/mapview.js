@@ -39,6 +39,7 @@ export class MapView {
     this.param = 'Ss';
     this.point = null;
     this.sheetZoom = 1;
+    this.view = { z: 1, px: 0, py: 0 }; // zoom y desplazamiento del mapa de mosaicos
     this.root.innerHTML = `
       <div class="map-left">
         <div class="map-toolbar">
@@ -49,6 +50,7 @@ export class MapView {
           <label class="inline">Lat <input id="mv-lat" type="number" step="0.001"></label>
           <label class="inline">Lon <input id="mv-lon" type="number" step="0.001"></label>
           <button id="mv-go" class="btn small">Ubicar</button>
+          <button id="mv-reset" class="btn small" title="Restablecer el zoom del mapa">Ver todo</button>
           <select id="mv-city" aria-label="Ciudades de referencia"><option value="">Ciudades…</option>${CITIES.map((c, i) => `<option value="${i}">${c.name}</option>`).join('')}</select>
         </div>
         <div class="map-stage">
@@ -60,6 +62,7 @@ export class MapView {
       </div>
       <div class="map-right">
         <div class="sheet-head"><strong class="sheet-title">Hoja del mapa</strong><span class="sheet-tabs"></span>
+          <span class="hint">Rueda: zoom · arrastrar: mover · clic: ubicar</span>
           <span class="zoom"><button class="btn small" data-z="-1" aria-label="Alejar">−</button><button class="btn small" data-z="1" aria-label="Acercar">+</button></span></div>
         <div class="sheet-view"><div class="sheet-empty">Haz clic en el mapa para ver la hoja REP del sitio y ajustar el punto sobre ella.</div></div>
         <div class="pick-info"></div>
@@ -89,12 +92,88 @@ export class MapView {
       if (c) this.pick(c.lon, c.lat);
     });
     root.querySelectorAll('.zoom button').forEach((b) => b.addEventListener('click', () => {
-      this.sheetZoom = Math.max(0.5, Math.min(3, this.sheetZoom * (b.dataset.z === '1' ? 1.25 : 0.8)));
-      this.showSheet(true);
+      const v = this.sheetView;
+      this.zoomSheet(b.dataset.z === '1' ? 1.25 : 0.8, v.clientWidth / 2, v.clientHeight / 2);
     }));
-    this.stage.addEventListener('click', (e) => {
-      const { lon, lat } = this.toLonLat(e);
-      this.pick(lon, lat);
+    root.querySelector('#mv-reset').addEventListener('click', () => {
+      this.view = { z: 1, px: 0, py: 0 };
+      this.draw();
+    });
+    // ---- mapa de mosaicos: rueda = zoom en el cursor; arrastrar = mover; clic = ubicar
+    this.stage.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = this.stage.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const z0 = this.view.z;
+      const z1 = Math.max(1, Math.min(60, z0 * Math.exp(-e.deltaY * 0.0015)));
+      this.view.px = cx - ((cx - this.view.px) * z1) / z0;
+      this.view.py = cy - ((cy - this.view.py) * z1) / z0;
+      this.view.z = z1;
+      if (z1 === 1) this.view = { z: 1, px: 0, py: 0 };
+      this.draw();
+    }, { passive: false });
+    let drag = null;
+    this.stage.addEventListener('pointerdown', (e) => {
+      drag = { x: e.clientX, y: e.clientY, px: this.view.px, py: this.view.py, moved: false };
+      this.stage.setPointerCapture(e.pointerId);
+    });
+    this.stage.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x;
+      const dy = e.clientY - drag.y;
+      if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
+      if (drag.moved) {
+        this.view.px = drag.px + dx;
+        this.view.py = drag.py + dy;
+        this.stage.classList.add('dragging');
+        this.draw();
+      }
+    });
+    this.stage.addEventListener('pointerup', (e) => {
+      if (drag && !drag.moved) {
+        const { lon, lat } = this.toLonLat(e);
+        this.pick(lon, lat);
+      }
+      drag = null;
+      this.stage.classList.remove('dragging');
+    });
+    // ---- hoja REP: rueda = zoom en el cursor; arrastrar = desplazar
+    this.sheetView.addEventListener('wheel', (e) => {
+      if (!this.sheetImg) return;
+      e.preventDefault();
+      const rect = this.sheetView.getBoundingClientRect();
+      this.zoomSheet(Math.exp(-e.deltaY * 0.0015), e.clientX - rect.left, e.clientY - rect.top);
+    }, { passive: false });
+    let sdrag = null;
+    this.sheetView.addEventListener('pointerdown', (e) => {
+      if (!this.sheetImg) return;
+      sdrag = { x: e.clientX, y: e.clientY, sl: this.sheetView.scrollLeft, st: this.sheetView.scrollTop, moved: false };
+      this.sheetView.setPointerCapture(e.pointerId);
+    });
+    this.sheetView.addEventListener('pointermove', (e) => {
+      if (!sdrag) return;
+      const dx = e.clientX - sdrag.x;
+      const dy = e.clientY - sdrag.y;
+      if (Math.abs(dx) + Math.abs(dy) > 4) sdrag.moved = true;
+      if (sdrag.moved) {
+        this.sheetView.scrollLeft = sdrag.sl - dx;
+        this.sheetView.scrollTop = sdrag.st - dy;
+        this.sheetView.classList.add('dragging');
+      }
+    });
+    this.sheetView.addEventListener('pointerup', (e) => {
+      if (sdrag && !sdrag.moved && this.sheetImg) {
+        const r = this.sheetImg.getBoundingClientRect();
+        const x = (e.clientX - r.left) / this.sheetZoom;
+        const y = (e.clientY - r.top) / this.sheetZoom;
+        if (x >= 0 && y >= 0 && x <= this.sheetImg.naturalWidth && y <= this.sheetImg.naturalHeight) {
+          const ll = pixelToLonLat(this.grid, this.sheet.sheet, x, y);
+          this.setPoint(ll.lon, ll.lat, false);
+        }
+      }
+      sdrag = null;
+      this.sheetView.classList.remove('dragging');
     });
     this.stage.addEventListener('mousemove', (e) => {
       const { lon, lat } = this.toLonLat(e);
@@ -122,13 +201,15 @@ export class MapView {
     return { w, h, k, ox, oy };
   }
   xy(lon, lat, d = this.dims()) {
-    return [d.ox + (lon - BBOX.lon0) * KX * d.k, d.oy + (BBOX.lat1 - lat) * d.k];
+    const v = this.view;
+    return [(d.ox + (lon - BBOX.lon0) * KX * d.k) * v.z + v.px, (d.oy + (BBOX.lat1 - lat) * d.k) * v.z + v.py];
   }
   toLonLat(e) {
     const rect = this.stage.getBoundingClientRect();
     const d = this.dims();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const v = this.view;
+    const x = (e.clientX - rect.left - v.px) / v.z;
+    const y = (e.clientY - rect.top - v.py) / v.z;
     return { lon: BBOX.lon0 + (x - d.ox) / (KX * d.k), lat: BBOX.lat1 - (y - d.oy) / d.k };
   }
 
@@ -263,25 +344,43 @@ export class MapView {
     this.sheetView.innerHTML = `<div class="sheet-canvas" style="transform-origin:0 0"><img src="${src}" alt="Hoja ${this.sheet.sheet} del mapa ${this.param}" draggable="false"><div class="sheet-pin" style="left:${this.sheet.x}px;top:${this.sheet.y}px"></div></div>`;
     const sc = this.sheetView.querySelector('.sheet-canvas');
     const img = sc.querySelector('img');
+    this.sheetImg = null;
     img.addEventListener('load', () => {
-      sc.style.width = img.naturalWidth * z + 'px';
-      sc.style.height = img.naturalHeight * z + 'px';
-      img.style.width = img.naturalWidth * z + 'px';
-      sc.querySelector('.sheet-pin').style.left = this.sheet.x * z + 'px';
-      sc.querySelector('.sheet-pin').style.top = this.sheet.y * z + 'px';
+      this.sheetImg = img;
+      this.applySheetZoom();
       if (prevScroll) [this.sheetView.scrollLeft, this.sheetView.scrollTop] = prevScroll;
       else {
         this.sheetView.scrollLeft = this.sheet.x * z - this.sheetView.clientWidth / 2;
         this.sheetView.scrollTop = this.sheet.y * z - this.sheetView.clientHeight / 2;
       }
     });
-    img.addEventListener('click', (e) => {
-      const rect = img.getBoundingClientRect();
-      const x = (e.clientX - rect.left) / z;
-      const y = (e.clientY - rect.top) / z;
-      const ll = pixelToLonLat(this.grid, this.sheet.sheet, x, y);
-      this.setPoint(ll.lon, ll.lat, false);
-    });
+  }
+
+  applySheetZoom() {
+    const img = this.sheetImg;
+    if (!img) return;
+    const z = this.sheetZoom;
+    const sc = img.parentElement;
+    sc.style.width = img.naturalWidth * z + 'px';
+    sc.style.height = img.naturalHeight * z + 'px';
+    img.style.width = img.naturalWidth * z + 'px';
+    const pin = sc.querySelector('.sheet-pin');
+    pin.style.left = this.sheet.x * z + 'px';
+    pin.style.top = this.sheet.y * z + 'px';
+  }
+
+  /** Zoom de la hoja manteniendo fijo el punto bajo (mx, my) del visor. */
+  zoomSheet(factor, mx, my) {
+    if (!this.sheetImg) return;
+    const v = this.sheetView;
+    const z0 = this.sheetZoom;
+    const z1 = Math.max(0.25, Math.min(4, z0 * factor));
+    const cx = (v.scrollLeft + mx) / z0;
+    const cy = (v.scrollTop + my) / z0;
+    this.sheetZoom = z1;
+    this.applySheetZoom();
+    v.scrollLeft = cx * z1 - mx;
+    v.scrollTop = cy * z1 - my;
   }
 
   /** Imagen (dataURL) del recorte de la hoja alrededor del punto, para el reporte. */

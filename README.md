@@ -14,9 +14,9 @@ de la memoria de cálculo a **Word (.docx)** y **PDF**.
 | Edificio de varios niveles | Fuerzas por nivel en X e Y (barlovento + sotavento), presiones en techo, torsión caso 2, carga mínima 0.48 kPa | FLE por dirección, Ta, Cu, Cs con mínimo REP, distribución vertical, cortantes y momentos |
 | Nave industrial a dos aguas | Cp de muros y techo (Fig. 6-6), ±GCpi, casos A/B, cargas lineales por marco | Cortante basal y por marco |
 | Torre de celosía / chimenea / poste | Cf de Fig. 6-23 (ε) o Fig. 6-21, factor de ráfaga flexible Gf, accesorios (Cf·A) | No-edificio Tabla 15.4-2, período manual o Rayleigh con EI |
-| Tanque elevado | Recipiente y soporte (patas o pedestal) | Péndulo invertido con masa de agua, Tabla 15.4-2 |
+| Tanque cilíndrico o cuadrado (elevado sobre patas, pedestal, o apoyado sin patas) | Recipiente (Fig. 6-21 circular o cuadrada) y soporte; sin patas no hay cargas de patas | Péndulo invertido con masa de agua (Tabla 15.4-2, tanques elevados) o tanque apoyado en el terreno (Tabla 15.4-2, tanques de fondo plano) |
 | Valla publicitaria (en terreno o sobre la azotea de una edificación de N niveles) | Anuncio sólido (Fig. 6-20, casos A, B y C con torsión, aberturas y esquina de retorno) o abierto (Fig. 6-22), sobre postes o sin postes (anclada directamente o apoyada como muro) | En terreno: no-edificio (rígida sin postes: V = 0.30·SDS·W·I, §15.4.2) "Signs and billboards" (R = 3.5, Cs ≥ 0.03). En azotea: componente no estructural Cap. 13 (Fp con ap = Rp = 2.5 y 1 + 2z/h) |
-| Volumen genérico | Lista de cuerpos configurables (prisma o cilindro, sólido o abierto, a cualquier cota sobre el terreno, con columnas de apoyo); Cf por franjas (Fig. 6-21/6-23) en X e Y | FLE con cualquier sistema de las Tablas 12.2-1 o 15.4-2 |
+| Volumen genérico | Lista de cuerpos configurables (prisma o cilindro, sólido o abierto, a cualquier cota sobre el terreno, con columnas de apoyo; techo plano, a una, dos o cuatro aguas, o domo en cilindros); Cf por franjas (Fig. 6-21/6-23) en X e Y, presiones de techo por Fig. 6-6 y domos por Fig. 6-7 | FLE con cualquier sistema de las Tablas 12.2-1 o 15.4-2 |
 
 Disposiciones propias del REP-2021 incluidas:
 
@@ -40,7 +40,8 @@ automáticamente (`tools/digitize/`) y se convirtieron en una grilla de 0.01° q
 interpola por coordenadas. En la pestaña **Ubicación y mapas REP** se hace clic en el
 mapa de Panamá y al lado se muestra **la hoja REP original** con el punto marcado. Se
 puede afinar la ubicación haciendo clic sobre la misma hoja, que tiene los nombres de
-los corregimientos.
+los corregimientos. La pantalla se divide en dos: arriba el mapa de mosaicos y abajo la
+hoja REP; en ambos la rueda del ratón hace zoom y arrastrar desplaza la vista.
 
 ![Mapa REP](docs/img/mapa-rep.png)
 
@@ -58,13 +59,13 @@ Precisión, medida con validación cruzada sobre las propias etiquetas de los ma
 
 ## Descarga (Windows)
 
-**[ForceCalculation-REP2021-Setup-1.0.0.exe](https://github.com/adrianguerra199510-jpg/FORCE-CALCULATION/raw/claude/nifty-einstein-5vo4up/instalador/ForceCalculation-REP2021-Setup-1.0.0.exe)** (93 MB, Windows 10/11 de 64 bits)
+**[ForceCalculation-REP2021-Setup-1.1.0.exe](https://github.com/adrianguerra199510-jpg/FORCE-CALCULATION/raw/claude/nifty-einstein-5vo4up/instalador/ForceCalculation-REP2021-Setup-1.1.0.exe)** (93 MB, Windows 10/11 de 64 bits)
 
 1. Descarga y ejecuta el instalador. Permite elegir la carpeta y crea accesos directos en el escritorio y en el menú Inicio.
 2. El instalador no está firmado digitalmente. Windows SmartScreen mostrará "Windows protegió su PC": haz clic en **Más información → Ejecutar de todas formas**.
 3. Los proyectos se guardan como `.fcp`; el instalador asocia esa extensión con la app.
 
-SHA-256: `1115981c87d8c355f3298646c77f3b2a7411cb3484013127772c520ff4bc2c73`
+SHA-256: `348b3b8e7643a68f5bc35efabd28159dd5ad789e27d46605def62879aeb71209`
 
 ## Instalación y uso (desde el código)
 
@@ -84,7 +85,7 @@ Generar el instalador de Windows (desde Windows):
 npm run dist
 ```
 
-El instalador queda en `dist/ForceCalculation-REP2021-Setup-1.0.0.exe`.
+El instalador queda en `dist/ForceCalculation-REP2021-Setup-1.1.0.exe`.
 
 Flujo de trabajo:
 
