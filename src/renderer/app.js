@@ -240,7 +240,7 @@ function windDirFor(r, lc) {
     case 'generico':
       return lc === 'wy' ? { axis: 'Z', sign: -1, kztApplies: !parallel2D } : lc === 'wx' ? { axis: 'X', sign: 1, kztApplies: true } : null;
     case 'nave':
-      return lc === 'wl' ? { axis: 'Z', sign: 1, kztApplies: !parallel2D } : lc === 'wt' ? { axis: 'X', sign: 1, kztApplies: true } : null;
+      return lc === 'wl' ? { axis: 'Z', sign: -1, kztApplies: !parallel2D } : lc === 'wt' ? { axis: 'X', sign: 1, kztApplies: true } : null;
     case 'valla':
       return { axis: 'Z', sign: -1, kztApplies: true };
     default:

@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { terrainElevation, Kz as KzFn, Kzt as KztFn, EXPOSURE } from '../calc/wind.js';
+const KzSafe = (z, e) => KzFn(Math.max(z, 0.01), e);
 
 const COL = {
   member: 0x2b3a44,
@@ -143,8 +144,32 @@ export class Viewer {
   }
 
 
-  thinArrow(tail, dir, len, color) {
-    const r = (this.arrowRef || this.size * 0.45) * 0.005;
+
+  /**
+   * Carga de barlovento dibujada como perfil sobre la estructura: flechas apiladas en altura
+   * con la punta sobre la cara y línea envolvente por las colas (longitud ∝ presión).
+   * items: [{ z, p }] ; at(z) → punto de la cara a esa altura ; dir: dirección del viento.
+   */
+  loadProfile(items, at, dir, color, Lmax, pref) {
+    const pm = pref || Math.max(...items.map((i) => Math.abs(i.p)), 1e-9);
+    const tails = [];
+    const D = new THREE.Vector3(...dir).normalize();
+    items.forEach((it) => {
+      const len = Math.max((Lmax * Math.abs(it.p)) / pm, Lmax * 0.04);
+      const tip = at(it.z);
+      const tail = tip.clone().add(D.clone().multiplyScalar(-len));
+      this.thinArrow(tail, D, len, color, 1.8);
+      tails.push(tail);
+    });
+    const base = at(items[0].z);
+    const top = at(items[items.length - 1].z);
+    this.loads.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([base, top]), new THREE.LineBasicMaterial({ color })));
+    this.loads.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(tails), new THREE.LineBasicMaterial({ color })));
+    return tails;
+  }
+
+  thinArrow(tail, dir, len, color, thick = 1) {
+    const r = (this.arrowRef || this.size * 0.45) * 0.005 * thick;
     const headL = Math.min(len * 0.35, (this.arrowRef || this.size) * 0.05);
     const mat = new THREE.MeshBasicMaterial({ color });
     const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
@@ -576,7 +601,7 @@ export class Viewer {
           tails.push([Bx / 2, r.h, By + len + gap]);
         }
       });
-      if (rows.length > 8) this.profile(tails, color);
+      if (rows.length > 2) this.profile(tails, color);
     } else if (res.typology === 'nave') {
       if (lc === 'sx' || lc === 'sy') {
         const { span, length, he } = res.geometry;
@@ -640,15 +665,11 @@ export class Viewer {
             ];
             const geo = new THREE.BufferGeometry().setFromPoints([pts[0], pts[1], pts[2], pts[0], pts[2], pts[3]]);
             this.loads.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: ramp(r.p), transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false })));
-            // campo de flechas pequeñas: la carga actúa en toda la superficie
-            const nCol = Math.max(2, Math.min(5, Math.round(b / Math.max(1, (r.z1 - r.z0)))));
-            for (let k = 0; k < nCol; k++) {
-              const off = -b / 2 + (b * (k + 0.5)) / nCol;
-              const len = L * 0.22 * (r.p / pmax) + L * 0.03;
-              const tip = f0.clone().add(across.clone().multiplyScalar(off)).setY(r.zc);
-              const tail = tip.clone().add(dirv.clone().multiplyScalar(-len));
-              this.thinArrow(tail, dirv, len, COL.wind);
-            }
+          }
+          // perfil de carga sobre la cara (una columna al centro y, si es ancha, en los bordes)
+          const cols = b > 4 ? [-b * 0.35, 0, b * 0.35] : [0];
+          for (const off of cols) {
+            this.loadProfile(rr.map((r) => ({ z: r.zc, p: r.p })), (z) => f0.clone().add(across.clone().multiplyScalar(off)).setY(z), dirv.toArray(), COL.wind, L * 0.85, pmax);
           }
           // etiquetas de presión en la franja inferior y superior
           const lo = rr[0];
@@ -657,11 +678,10 @@ export class Viewer {
             this.loads.add(this.label(`${lo.p.toFixed(2)} kPa`, f0.clone().add(across.clone().multiplyScalar(-b / 2 - 0.2)).setY(lo.zc).toArray(), '#1C2A33', 'rgba(255,255,255,0.9)'));
             if (hi !== lo) this.loads.add(this.label(`${hi.p.toFixed(2)} kPa`, f0.clone().add(across.clone().multiplyScalar(-b / 2 - 0.2)).setY(hi.zc).toArray(), '#1C2A33', 'rgba(255,255,255,0.9)'));
           }
-          // resultante del volumen
+          // resultante del volumen (rótulo)
           const pv = d.perVol.find((x) => x.vol === v.name);
-          const len = Math.max((L * 0.9 * pv.F) / Fmax, L * 0.15);
-          const tip = f0.clone().add(across.clone().multiplyScalar(b / 2 + 0.6)).setY(pv.z);
-          this.arrow(tip.clone().add(dirv.clone().multiplyScalar(-len)).toArray(), dirv.toArray(), len, COL.wind, `${v.name}: F = ${fmt(pv.F)}`);
+          if (this.showLabels) this.loads.add(this.label(`${v.name}: F = ${fmt(pv.F)}`, f0.clone().add(dirv.clone().multiplyScalar(-L * 0.35)).setY(hi.z1 + 0.6).toArray(), '#ffffff', '#1F5FA8'));
+          void Fmax;
         }
         for (const c of d.cols) {
           const v = byName[c.vol];
@@ -752,7 +772,7 @@ export class Viewer {
      * Superficie poligonal con presión p (kPa, + hacia la superficie) y normal exterior n.
      * Se colorea y se cubre con un campo de flechas: la carga actúa en toda la superficie.
      */
-    const surface = (poly, p, n, label) => {
+    const surface = (poly, p, n, label, noArrows = false) => {
       const P = poly.map((q) => new THREE.Vector3(...q));
       const N = new THREE.Vector3(...n).normalize();
       const off = N.clone().multiplyScalar(0.03);
@@ -781,8 +801,8 @@ export class Viewer {
       const y1 = Math.max(...ys);
       const nu = Math.max(1, Math.round((x1 - x0) / spacing));
       const nv = Math.max(1, Math.round((y1 - y0) / spacing));
-      const len = arrowLen(p);
-      for (let i = 0; i < nu; i++) {
+      const len = noArrows ? 0 : arrowLen(p);
+      for (let i = 0; i < (noArrows ? 0 : nu); i++) {
         for (let j = 0; j < nv; j++) {
           const x = x0 + ((x1 - x0) * (i + 0.5)) / nu;
           const y = y0 + ((y1 - y0) * (j + 0.5)) / nv;
@@ -801,10 +821,25 @@ export class Viewer {
     const nL = [-Math.sin(sA), Math.cos(sA), 0];
     const nR = [Math.sin(sA), Math.cos(sA), 0];
     const gable = (z) => [[0, 0, z], [span, 0, z], [span, he, z], [span / 2, hr, z], [0, he, z]];
+    // perfil de presión de barlovento sobre la estructura: qz varía con la altura (Kz)
+    const exp = res.wind.ctx.exposure;
+    const windwardProfile = (row, height, at, dirv, label) => {
+      const internalTerm = row.pe - row[internal];
+      const n = 8;
+      const items = Array.from({ length: n }, (_, i) => {
+        const z = (height * (i + 0.5)) / n;
+        return { z, p: (row.pe * KzSafe(Math.max(z, 4.57), exp)) / KzSafe(Math.max(he, 4.57), exp) - internalTerm };
+      });
+      const tails = this.loadProfile(items, at, dirv, COL.wind, spacing * 2.6, pmax);
+      if (this.showLabels && label) this.loads.add(this.label(`${label}: ${row[internal].toFixed(2)} kPa (diseño, q al alero)`, tails[tails.length - 1].clone().add(new THREE.Vector3(0, spacing * 0.3, 0)).toArray(), '#ffffff', '#1F5FA8'));
+    };
     const yAt = (x) => (x <= span / 2 ? he + ((hr - he) * x) / (span / 2) : hr - ((hr - he) * (x - span / 2)) / (span / 2));
     if (which === 'transversal') {
       // viento +X; barlovento en x = 0; los frontones (z = 0 y z = L) son muros laterales
-      surface([[0, 0, length], [0, 0, 0], [0, he, 0], [0, he, length]], pick('Muro barlovento')[internal], [-1, 0, 0], 'Barlovento');
+      surface([[0, 0, length], [0, 0, 0], [0, he, 0], [0, he, length]], pick('Muro barlovento')[internal], [-1, 0, 0], '', true);
+      for (const zc of [length * 0.25, length * 0.5, length * 0.75]) {
+        windwardProfile(pick('Muro barlovento'), he, (z) => new THREE.Vector3(-0.05, z, zc), [1, 0, 0], zc === length * 0.5 ? 'Barlovento' : null);
+      }
       surface([[span, 0, 0], [span, 0, length], [span, he, length], [span, he, 0]], pick('Muro sotavento')[internal], [1, 0, 0], 'Sotavento');
       const sd = pick('Muros laterales (frontones)')[internal];
       surface(gable(0), sd, [0, 0, -1], 'Lateral');
@@ -828,16 +863,20 @@ export class Viewer {
         }
       }
     } else {
-      // viento +Z (paralelo a la cumbrera); barlovento en z = 0
-      surface(gable(0), pick('Frontón barlovento')[internal], [0, 0, -1], 'Barlovento');
-      surface(gable(length), pick('Frontón sotavento')[internal], [0, 0, 1], 'Sotavento');
+      // viento paralelo a la cumbrera, soplando hacia -Z: barlovento en z = L (cara visible desde la cámara)
+      surface(gable(length), pick('Frontón barlovento')[internal], [0, 0, 1], '', true);
+      for (const [xc, hh] of [[span * 0.25, he + (hr - he) * 0.5], [span * 0.5, hr], [span * 0.75, he + (hr - he) * 0.5]]) {
+        windwardProfile(pick('Frontón barlovento'), hh, (z) => new THREE.Vector3(xc, z, length + 0.05), [0, 0, -1], xc === span * 0.5 ? 'Barlovento' : null);
+      }
+      surface(gable(0), pick('Frontón sotavento')[internal], [0, 0, -1], 'Sotavento');
       const sd = pick('Muros laterales largos')[internal];
       surface([[0, 0, length], [0, 0, 0], [0, he, 0], [0, he, length]], sd, [-1, 0, 0], 'Lateral');
       surface([[span, 0, 0], [span, 0, length], [span, he, length], [span, he, 0]], sd, [1, 0, 0], 'Lateral');
       const zones = rows.filter((r) => r.x0 !== undefined && (r.caseCp === roofCase || !r.caseCp));
       for (const zn of zones) {
-        const z0 = zn.x0;
-        const z1 = Math.min(zn.x1, length);
+        // distancias medidas desde el borde de barlovento (z = L)
+        const z0 = length - Math.min(zn.x1, length);
+        const z1 = length - zn.x0;
         surface([[0, he, z0], [0, he, z1], [span / 2, hr, z1], [span / 2, hr, z0]], zn[internal], nL, '');
         surface([[span / 2, hr, z0], [span / 2, hr, z1], [span, he, z1], [span, he, z0]], zn[internal], nR, '');
       }
@@ -1100,12 +1139,12 @@ export class Viewer {
       this.env.add(this.label(label, lp.toArray(), '#ffffff', '#' + new THREE.Color(color).getHexString()));
     };
     const expTxt = { B: 'B – urbana / suburbana', C: 'C – terreno abierto', D: 'D – costa / agua' }[exp];
-    const upBase = C.clone().add(dir.clone().multiplyScalar(-(r0 + Lp * 0.2)));
-    drawProfile(upBase, vUp, 0x1f5fa8, `Viento · Exposición ${expTxt} · α = ${e.alpha}, zg = ${e.zg.toFixed(0)} m · V ∝ √Kz`);
+    // rótulo de la exposición a barlovento (las cargas se dibujan sobre la estructura)
+    const lb = C.clone().add(dir.clone().multiplyScalar(-(r0 + Lp * 0.6)));
+    this.env.add(this.label(`Viento → Exposición ${expTxt} · α = ${e.alpha}, zg = ${e.zg.toFixed(0)} m`, [lb.x, this.groundAt(lb.x, lb.z) + 2, lb.z], '#ffffff', '#1F5FA8'));
+    void vUp; void vTop; void side;
     if (applies) {
-      const b2 = C.clone().add(side.clone().multiplyScalar(r0 * 0.9)).add(dir.clone().multiplyScalar(-r0 * 0.2));
-      const k0 = KztFn(0, exp, this.envOpts.topoActive);
-      drawProfile(b2, vTop, 0x0e8a9a, `Sobre el relieve · V ∝ √(Kz·Kzt) · Kzt(base) = ${k0.toFixed(2)}`);
+      // (el efecto del relieve se ilustra con los perfiles a escala del sitio)
     } else if (topoOn) {
       this.env.add(this.label('Viento paralelo a la cresta: Kzt = 1.00', [C.x, this.groundAt(C.x, C.z) + zTop * 1.25, C.z], '#1C2A33', '#F2E330'));
     }

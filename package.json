@@ -1,7 +1,7 @@
 {
   "name": "force-calculation",
   "productName": "Force Calculation REP-2021",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Cálculo de cargas de viento y sismo según REP-2021 (Panamá) / ASCE 7-05, con visor 3D y reportes Word/PDF",
   "main": "src/main/main.js",
   "scripts": {
