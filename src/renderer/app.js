@@ -32,6 +32,7 @@ async function init() {
   viewer = new Viewer($('#viewer'));
   mapView = new MapView($('#mapview'), { grid, basemap: JSON.parse(bm), onPick: onMapPick });
   bindUi();
+  window.api.version().then((v) => ($('#appVersion').textContent = `v${v}`));
   applyMapAtSite(false);
   renderAllForms();
   recompute(true);

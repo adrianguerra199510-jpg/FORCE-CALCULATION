@@ -159,7 +159,7 @@ export class Viewer {
 
   fit(size, center) {
     const c = new THREE.Vector3(...center).add(new THREE.Vector3(...this.worldOffset));
-    const r = size * (this.envOpts && this.envOpts.show ? 1.3 : 1);
+    const r = size * (this.envOpts && this.envOpts.show ? 1.15 : 1);
     this.camera.position.set(c.x - r * 1.55, c.y + r * 0.95, c.z + r * 1.8);
     this.controls.target.copy(c);
     this.camera.near = r / 100;
@@ -741,70 +741,109 @@ export class Viewer {
       if (!cand.length) return null;
       return cand.find((r) => r.caseCp === roofCase) || cand[0];
     };
-    const allP = rows.map((r) => Math.abs(r[internal]));
-    const pmax = Math.max(...allP, 0.01);
+    const pmax = Math.max(...rows.map((r) => Math.abs(r[internal])), 0.01);
     const color = (p) => {
       const t = Math.min(1, Math.abs(p) / pmax);
-      const base = new THREE.Color(p >= 0 ? COL.wind : COL.suction);
-      return new THREE.Color(0xffffff).lerp(base, 0.25 + 0.75 * t);
+      return new THREE.Color(0xffffff).lerp(new THREE.Color(p >= 0 ? COL.wind : COL.suction), 0.25 + 0.75 * t);
     };
-    const quad = (pts, p, labelPos, normal) => {
-      const geo = new THREE.BufferGeometry();
-      const v = [pts[0], pts[1], pts[2], pts[0], pts[2], pts[3]].flat();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
-      geo.computeVertexNormals();
-      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: color(p), transparent: true, opacity: 0.72, side: THREE.DoubleSide, depthWrite: false }));
-      this.loads.add(m);
-      // flecha: hacia la superficie si p > 0 (presión), alejándose si p < 0 (succión)
-      const n = new THREE.Vector3(...normal).normalize();
-      const len = (this.size * 0.16 * Math.abs(p)) / pmax + 0.5;
-      const c = new THREE.Vector3(...labelPos);
-      if (p >= 0) this.arrow(c.clone().add(n.clone().multiplyScalar(len)).toArray(), n.clone().negate().toArray(), len, COL.wind);
-      else this.arrow(c.toArray(), n.toArray(), len, COL.suction);
-      if (this.showLabels) this.loads.add(this.label(`${p.toFixed(2)} kPa`, c.clone().add(n.clone().multiplyScalar(0.3)).toArray(), '#ffffff', p >= 0 ? '#1F5FA8' : '#7A3EA0'));
+    const spacing = Math.max(span, length) / 9;
+    const arrowLen = (p) => (Math.abs(p) / pmax) * spacing * 1.1 + spacing * 0.15;
+    /**
+     * Superficie poligonal con presión p (kPa, + hacia la superficie) y normal exterior n.
+     * Se colorea y se cubre con un campo de flechas: la carga actúa en toda la superficie.
+     */
+    const surface = (poly, p, n, label) => {
+      const P = poly.map((q) => new THREE.Vector3(...q));
+      const N = new THREE.Vector3(...n).normalize();
+      const off = N.clone().multiplyScalar(0.03);
+      const tri = [];
+      for (let i = 1; i < P.length - 1; i++) tri.push(P[0].clone().add(off), P[i].clone().add(off), P[i + 1].clone().add(off));
+      const geo = new THREE.BufferGeometry().setFromPoints(tri);
+      this.loads.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: color(p), transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false })));
+      // base local del plano
+      const u = P[1].clone().sub(P[0]).normalize();
+      const v = N.clone().cross(u).normalize();
+      const pts2 = P.map((q) => [q.clone().sub(P[0]).dot(u), q.clone().sub(P[0]).dot(v)]);
+      const xs = pts2.map((q) => q[0]);
+      const ys = pts2.map((q) => q[1]);
+      const inside = (x, y) => {
+        let c = false;
+        for (let i = 0, j = pts2.length - 1; i < pts2.length; j = i++) {
+          const [xi, yi] = pts2[i];
+          const [xj, yj] = pts2[j];
+          if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
+        }
+        return c;
+      };
+      const x0 = Math.min(...xs);
+      const x1 = Math.max(...xs);
+      const y0 = Math.min(...ys);
+      const y1 = Math.max(...ys);
+      const nu = Math.max(1, Math.round((x1 - x0) / spacing));
+      const nv = Math.max(1, Math.round((y1 - y0) / spacing));
+      const len = arrowLen(p);
+      for (let i = 0; i < nu; i++) {
+        for (let j = 0; j < nv; j++) {
+          const x = x0 + ((x1 - x0) * (i + 0.5)) / nu;
+          const y = y0 + ((y1 - y0) * (j + 0.5)) / nv;
+          if (!inside(x, y)) continue;
+          const at = P[0].clone().add(u.clone().multiplyScalar(x)).add(v.clone().multiplyScalar(y)).add(off);
+          if (p >= 0) this.thinArrow(at.clone().add(N.clone().multiplyScalar(len)), N.clone().negate(), len, COL.wind);
+          else this.thinArrow(at, N, len, COL.suction);
+        }
+      }
+      if (this.showLabels) {
+        const c = P.reduce((a, q) => a.add(q), new THREE.Vector3()).multiplyScalar(1 / P.length).add(N.clone().multiplyScalar(len + 0.4));
+        this.loads.add(this.label(`${label ? label + ': ' : ''}${p.toFixed(2)} kPa`, c.toArray(), '#ffffff', p >= 0 ? '#1F5FA8' : '#7A3EA0'));
+      }
     };
-    const e = 0.02;
     const sA = Math.atan2(hr - he, span / 2);
     const nL = [-Math.sin(sA), Math.cos(sA), 0];
     const nR = [Math.sin(sA), Math.cos(sA), 0];
+    const gable = (z) => [[0, 0, z], [span, 0, z], [span, he, z], [span / 2, hr, z], [0, he, z]];
+    const yAt = (x) => (x <= span / 2 ? he + ((hr - he) * x) / (span / 2) : hr - ((hr - he) * (x - span / 2)) / (span / 2));
     if (which === 'transversal') {
-      // viento +X; barlovento en x = 0
-      const ww = pick('Muro barlovento');
-      const lw = pick('Muro sotavento');
-      const sd = pick('Muros laterales (frontones)');
-      quad([[-e, 0, 0], [-e, he, 0], [-e, he, length], [-e, 0, length]], ww[internal], [-e, he / 2, length / 2], [-1, 0, 0]);
-      quad([[span + e, 0, 0], [span + e, he, 0], [span + e, he, length], [span + e, 0, length]], lw[internal], [span + e, he / 2, length / 2], [1, 0, 0]);
-      quad([[0, 0, -e], [0, he, -e], [span, he, -e], [span, 0, -e]], sd[internal], [span / 2, he / 2, -e], [0, 0, -1]);
+      // viento +X; barlovento en x = 0; los frontones (z = 0 y z = L) son muros laterales
+      surface([[0, 0, length], [0, 0, 0], [0, he, 0], [0, he, length]], pick('Muro barlovento')[internal], [-1, 0, 0], 'Barlovento');
+      surface([[span, 0, 0], [span, 0, length], [span, he, length], [span, he, 0]], pick('Muro sotavento')[internal], [1, 0, 0], 'Sotavento');
+      const sd = pick('Muros laterales (frontones)')[internal];
+      surface(gable(0), sd, [0, 0, -1], 'Lateral');
+      surface(gable(length), sd, [0, 0, 1], 'Lateral');
       const rww = pick('Techo barlovento');
       const rlw = pick('Techo sotavento');
       if (rww && rlw) {
-        quad([[0, he + e, 0], [span / 2, hr + e, 0], [span / 2, hr + e, length], [0, he + e, length]], rww[internal], [span / 4, (he + hr) / 2 + e, length / 2], nL);
-        quad([[span / 2, hr + e, 0], [span, he + e, 0], [span, he + e, length], [span / 2, hr + e, length]], rlw[internal], [(3 * span) / 4, (he + hr) / 2 + e, length / 2], nR);
+        surface([[0, he, length], [0, he, 0], [span / 2, hr, 0], [span / 2, hr, length]], rww[internal], nL, 'Techo barl.');
+        surface([[span / 2, hr, length], [span / 2, hr, 0], [span, he, 0], [span, he, length]], rlw[internal], nR, 'Techo sotav.');
       } else {
         const zones = rows.filter((r) => r.x0 !== undefined && (r.caseCp === roofCase || !r.caseCp));
-        const yAt = (x) => (x <= span / 2 ? he + ((hr - he) * x) / (span / 2) : hr - ((hr - he) * (x - span / 2)) / (span / 2));
         for (const zn of zones) {
-          const x0 = zn.x0;
-          const x1 = zn.x1;
-          quad([[x0, yAt(x0) + e, 0], [x1, yAt(x1) + e, 0], [x1, yAt(x1) + e, length], [x0, yAt(x0) + e, length]], zn[internal], [(x0 + x1) / 2, yAt((x0 + x1) / 2) + e, length / 2], [0, 1, 0]);
+          // la zona puede cruzar la cumbrera: se parte en los dos faldones
+          const cuts = [zn.x0, ...(zn.x0 < span / 2 && zn.x1 > span / 2 ? [span / 2] : []), zn.x1];
+          for (let k = 0; k < cuts.length - 1; k++) {
+            const xa = cuts[k];
+            const xb = cuts[k + 1];
+            const nrm = (xa + xb) / 2 <= span / 2 ? nL : nR;
+            surface([[xa, yAt(xa), length], [xa, yAt(xa), 0], [xb, yAt(xb), 0], [xb, yAt(xb), length]], zn[internal], nrm, '');
+          }
         }
       }
     } else {
       // viento +Z (paralelo a la cumbrera); barlovento en z = 0
-      const ww = pick('Frontón barlovento');
-      const lw = pick('Frontón sotavento');
-      const sd = pick('Muros laterales largos');
-      quad([[0, 0, -e], [0, he, -e], [span, he, -e], [span, 0, -e]], ww[internal], [span / 2, he / 2, -e], [0, 0, -1]);
-      quad([[0, 0, length + e], [0, he, length + e], [span, he, length + e], [span, 0, length + e]], lw[internal], [span / 2, he / 2, length + e], [0, 0, 1]);
-      quad([[-e, 0, 0], [-e, he, 0], [-e, he, length], [-e, 0, length]], sd[internal], [-e, he / 2, length / 2], [-1, 0, 0]);
+      surface(gable(0), pick('Frontón barlovento')[internal], [0, 0, -1], 'Barlovento');
+      surface(gable(length), pick('Frontón sotavento')[internal], [0, 0, 1], 'Sotavento');
+      const sd = pick('Muros laterales largos')[internal];
+      surface([[0, 0, length], [0, 0, 0], [0, he, 0], [0, he, length]], sd, [-1, 0, 0], 'Lateral');
+      surface([[span, 0, 0], [span, 0, length], [span, he, length], [span, he, 0]], sd, [1, 0, 0], 'Lateral');
       const zones = rows.filter((r) => r.x0 !== undefined && (r.caseCp === roofCase || !r.caseCp));
       for (const zn of zones) {
         const z0 = zn.x0;
-        const z1 = zn.x1;
-        quad([[0, he + e, z0], [span / 2, hr + e, z0], [span / 2, hr + e, z1], [0, he + e, z1]], zn[internal], [span / 4, (he + hr) / 2 + e, (z0 + z1) / 2], nL);
+        const z1 = Math.min(zn.x1, length);
+        surface([[0, he, z0], [0, he, z1], [span / 2, hr, z1], [span / 2, hr, z0]], zn[internal], nL, '');
+        surface([[span / 2, hr, z0], [span / 2, hr, z1], [span, he, z1], [span, he, z0]], zn[internal], nR, '');
       }
     }
   }
+
 
 
   // ------------------------------------------------------------- topografía (Fig. 6-4)
@@ -1015,7 +1054,7 @@ export class Viewer {
 
     // ---- perfiles de velocidad del viento
     const e = EXPOSURE[exp];
-    const zTop = Math.max(sz.y * 1.1, 10);
+    const zTop = Math.max(sz.y * 1.1, 10, this.size * 0.45);
     const n = 8;
     const zs = Array.from({ length: n }, (_, i) => (zTop * (i + 0.6)) / n);
     const vUp = zs.map((z) => Math.sqrt(KzFn(z, exp)));
@@ -1025,7 +1064,16 @@ export class Viewer {
     const vmax = Math.max(...vUp, ...(vTop || [0]));
     const Lp = Math.max(this.size * 0.42, 8);
     const rad = Math.max(0.08, Lp * 0.012);
-    const drawProfile = (base, vals, color, label) => {
+    const drawProfile = (base, vals, color, label, o = {}) => {
+      const zs_ = o.zs || zs;
+      const zTop_ = o.zTop || zTop;
+      const Lp_ = o.Lp || Lp;
+      const rad_ = o.rad || rad;
+      const vmax_ = o.vmax || vmax;
+      const dir_ = o.dir || dir;
+      return drawProfileImpl(base, vals, color, label, zs_, zTop_, Lp_, rad_, vmax_, dir_);
+    };
+    const drawProfileImpl = (base, vals, color, label, zs, zTop, Lp, rad, vmax, dir) => {
       const g0 = this.groundAt(base.x, base.z);
       const tips = [];
       zs.forEach((z, i) => {
@@ -1060,6 +1108,33 @@ export class Viewer {
       drawProfile(b2, vTop, 0x0e8a9a, `Sobre el relieve · V ∝ √(Kz·Kzt) · Kzt(base) = ${k0.toFixed(2)}`);
     } else if (topoOn) {
       this.env.add(this.label('Viento paralelo a la cresta: Kzt = 1.00', [C.x, this.groundAt(C.x, C.z) + zTop * 1.25, C.z], '#1C2A33', '#F2E330'));
+    }
+
+    // ---- perfiles a escala del sitio (vista "Sitio"): barlovento lejano vs. sobre el relieve
+    if (topoOn) {
+      const tA = this.envOpts.topoActive;
+      const { H, Lh } = this.topo;
+      const zTopS = Math.max(1.6 * H, sz.y * 1.3, 30);
+      const zsS = Array.from({ length: 10 }, (_, i) => (zTopS * (i + 0.6)) / 10);
+      const LpS = Math.max(0.5 * Lh, 15);
+      const radS = Math.max(0.15, LpS * 0.01);
+      const xUp = -2.6 * Lh;
+      const xS = +tA.x || 0;
+      const vUpS = zsS.map((z) => Math.sqrt(KzFn(z, exp)));
+      const vAtS = zsS.map((z) => Math.sqrt(KzFn(z, exp) * KztFn(z, exp, { ...tA, x: xS })));
+      const vCrest = zsS.map((z) => Math.sqrt(KzFn(z, exp) * KztFn(z, exp, { ...tA, x: 0 })));
+      const vmaxS = Math.max(...vUpS, ...vAtS, ...vCrest);
+      const [dxw, dzw] = this.toWorld(1, 0);
+      const dirS = new THREE.Vector3(dxw, 0, dzw);
+      const lateral = -Math.max(0.6 * Lh, r0 + 10); // a un costado de la estructura
+      const at = (lx, lz) => {
+        const [wx, wz] = this.toWorld(lx, lz);
+        return new THREE.Vector3(wx, 0, wz);
+      };
+      const optS = { zs: zsS, zTop: zTopS, Lp: LpS, rad: radS, vmax: vmaxS, dir: dirS };
+      drawProfile(at(xUp, lateral), vUpS, 0x1f5fa8, 'Barlovento lejano: V ∝ √Kz (Kzt = 1)', optS);
+      if (Math.abs(xS) > 0.3 * Lh) drawProfile(at(0, lateral), vCrest, 0x0b6f7c, `Cresta: Kzt(base) = ${KztFn(0, exp, { ...tA, x: 0 }).toFixed(2)}`, optS);
+      drawProfile(at(xS, lateral), vAtS, 0x0e8a9a, `En la estructura (x = ${xS} m): Kzt(base) = ${KztFn(0, exp, tA).toFixed(2)}`, optS);
     }
   }
 

@@ -15,7 +15,7 @@ function createWindow() {
     height: 920,
     minWidth: 1100,
     minHeight: 700,
-    title: 'Force Calculation · REP-2021',
+    title: `Force Calculation · REP-2021 · v${app.getVersion()}`,
     backgroundColor: '#E9EEEC',
     show: false,
     webPreferences: {
@@ -52,7 +52,7 @@ function menuTemplate() {
       ],
     },
     { label: 'Ver', submenu: [{ role: 'reload', label: 'Recargar' }, { role: 'toggleDevTools', label: 'Herramientas de desarrollo' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }] },
-    { label: 'Ayuda', submenu: [{ label: 'Acerca de', click: () => dialog.showMessageBox(win, { type: 'info', title: 'Force Calculation', message: 'Force Calculation · REP-2021', detail: 'Cálculo de cargas de viento y sismo según el Reglamento de Diseño Estructural de Panamá REP-2021 (ASCE/SEI 7-05).\n\nLos resultados deben ser revisados por un ingeniero idóneo.' }) }] },
+    { label: 'Ayuda', submenu: [{ label: 'Acerca de', click: () => dialog.showMessageBox(win, { type: 'info', title: 'Force Calculation', message: `Force Calculation · REP-2021 · versión ${app.getVersion()}`, detail: 'Cálculo de cargas de viento y sismo según el Reglamento de Diseño Estructural de Panamá REP-2021 (ASCE/SEI 7-05).\n\nLos resultados deben ser revisados por un ingeniero idóneo.' }) }] },
   ];
 }
 
@@ -130,6 +130,7 @@ ipcMain.handle('report:pdf', async (_e, model) => {
 });
 
 ipcMain.handle('shell:open', (_e, p) => shell.openPath(p));
+ipcMain.handle('app:version', () => app.getVersion());
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

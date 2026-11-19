@@ -211,3 +211,5 @@ fieldset.vol legend { font-weight: 600; font-size: 13.5px; padding: 0 4px; }
 .vol-grid label .unit { font-size: 11px; }
 .vol-grid input, .vol-grid select { font-size: 13px; padding: 4px 6px; }
 .vol-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
+
+.app-version { font-weight: 500; font-size: 12px; color: var(--muted); margin-left: 4px; }

@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('api', {
   exportDocx: (model) => ipcRenderer.invoke('report:docx', model),
   exportPdf: (model) => ipcRenderer.invoke('report:pdf', model),
   openPath: (p) => ipcRenderer.invoke('shell:open', p),
+  version: () => ipcRenderer.invoke('app:version'),
   onMenu: (fn) => ipcRenderer.on('menu', (_e, ch) => fn(ch)),
   selftest: {
     config: () => ipcRenderer.invoke('selftest:config'),
