@@ -108,18 +108,26 @@ export const SECTIONS = {
       { path: 'valla.members', label: 'Miembros del anuncio abierto', type: 'select', options: [{ value: 'plano', label: 'De caras planas' }, { value: 'redondo', label: 'Redondos' }], showIf: (p) => p.valla.panel === 'abierta' },
       { path: 'valla.memberD', label: 'Diámetro típico de miembro', unit: 'm', type: 'number', step: 0.01, showIf: (p) => p.valla.panel === 'abierta' && p.valla.members === 'redondo' },
       { path: 'valla.Lr', label: 'Esquina de retorno Lr (0 = sin retorno)', unit: 'm', type: 'number', step: 0.1, showIf: (p) => p.valla.panel !== 'abierta' },
-      { path: 'valla.nPosts', label: 'Número de postes', type: 'number', step: 1 },
-      { path: 'valla.postShape', label: 'Sección de los postes', type: 'select', options: [{ value: 'round', label: 'Circular' }, { value: 'square', label: 'Cuadrada' }] },
-      { path: 'valla.postD', label: 'Diámetro / lado de poste', unit: 'm', type: 'number', step: 0.05 },
+      { path: 'valla.soporte', label: 'Soporte', type: 'select', options: [{ value: 'postes', label: 'Sobre postes' }, { value: 'directa', label: 'Sin postes (anclada a la estructura o apoyada como muro)' }] },
+      { path: 'valla.nPosts', label: 'Número de postes', type: 'number', step: 1, showIf: (p) => p.valla.soporte !== 'directa' },
+      { path: 'valla.postShape', label: 'Sección de los postes', type: 'select', options: [{ value: 'round', label: 'Circular' }, { value: 'square', label: 'Cuadrada' }], showIf: (p) => p.valla.soporte !== 'directa' },
+      { path: 'valla.postD', label: 'Diámetro / lado de poste', unit: 'm', type: 'number', step: 0.05, showIf: (p) => p.valla.soporte !== 'directa' },
       { path: 'valla.Wpanel', label: 'Peso del anuncio y su armadura', unit: 'kN', type: 'number' },
-      { path: 'valla.wPost', label: 'Peso de cada poste', unit: 'kN/m', type: 'number', step: 0.1 },
-      { path: 'valla.periodMethod', label: 'Período fundamental', type: 'select', options: [{ value: 'rayleigh', label: 'Rayleigh con EI de los postes' }, { value: 'manual', label: 'Ingresar T' }] },
-      { path: 'valla.EIpost', label: 'EI de cada poste', unit: 'kN·m²', type: 'number', showIf: (p) => p.valla.periodMethod === 'rayleigh' },
+      { path: 'valla.wPost', label: 'Peso de cada poste', unit: 'kN/m', type: 'number', step: 0.1, showIf: (p) => p.valla.soporte !== 'directa' },
+      { path: 'valla.periodMethod', label: 'Período fundamental', type: 'select', options: [{ value: 'rayleigh', label: 'Rayleigh con EI de los postes' }, { value: 'rigida', label: 'Rígida (T < 0.06 s)' }, { value: 'manual', label: 'Ingresar T' }] },
+      { path: 'valla.EIpost', label: 'EI de cada poste', unit: 'kN·m²', type: 'number', showIf: (p) => p.valla.periodMethod === 'rayleigh' && p.valla.soporte !== 'directa' },
       { path: 'valla.T', label: 'T', unit: 's', type: 'number', step: 0.01, showIf: (p) => p.valla.periodMethod === 'manual' },
       { path: 'valla.system', label: 'Sistema (Tabla 15.4-2)', type: 'select', options: sysOpts(NONBUILDING_SYSTEMS.filter((s) => ['P1', 'P2', 'P3'].includes(s.id))), showIf: (p) => p.valla.apoyo === 'terreno' },
       { path: 'valla.ap', label: 'ap (Tabla 13.5-1)', type: 'number', step: 0.25, showIf: (p) => p.valla.apoyo === 'azotea' },
       { path: 'valla.Rp', label: 'Rp (Tabla 13.5-1)', type: 'number', step: 0.25, showIf: (p) => p.valla.apoyo === 'azotea' },
       { path: 'valla.Ip', label: 'Ip del componente (§13.1.3)', type: 'select', options: [{ value: 1.0, label: '1.0' }, { value: 1.5, label: '1.5 (riesgo para la vida / esencial)' }], showIf: (p) => p.valla.apoyo === 'azotea' },
+    ],
+    generico: [
+      { path: 'generico.system', label: 'Sistema sismorresistente', type: 'select', options: [...sysOpts(BUILDING_SYSTEMS), ...sysOpts(NONBUILDING_SYSTEMS)] },
+      { path: 'generico.periodMethod', label: 'Período fundamental', type: 'select', options: [{ value: 'Ta', label: 'Ta = Ct·hn^x (sólo sistemas de edificio)' }, { value: 'manual', label: 'Ingresar T' }, { value: 'rigida', label: 'Rígida (T < 0.06 s)' }] },
+      { path: 'generico.T', label: 'T', unit: 's', type: 'number', step: 0.01, showIf: (p) => p.generico.periodMethod !== 'rigida' },
+      { path: 'generico.slices', label: 'Franjas de cálculo por cuerpo', type: 'number', step: 1 },
+      { path: 'generico.surface', label: 'Superficie de cuerpos cilíndricos', type: 'select', options: [{ value: 'moderadamente liso', label: 'Moderadamente lisa' }, { value: 'rugoso', label: 'Rugosa' }, { value: 'muy rugoso', label: 'Muy rugosa' }] },
     ],
     tanque: [
       { path: 'tanque.D', label: 'Diámetro del tanque', unit: 'm', type: 'number', step: 0.1 },
@@ -227,4 +235,62 @@ export function renderFields(container, fields, project, onChange) {
     }
     container.appendChild(row);
   }
+}
+
+
+// ---------------------------------------------------------------- editor de volúmenes
+const VOL_FIELDS = [
+  ['name', 'Nombre', 'text'],
+  ['shape', 'Forma', 'select', [['rect', 'Prisma rectangular'], ['cyl', 'Cilindro']]],
+  ['tipo', 'Tipo', 'select', [['solido', 'Sólido / cerrado'], ['abierto', 'Abierto / celosía']]],
+  ['bx', 'Ancho X (o diámetro)', 'number', 'm'],
+  ['by', 'Ancho Y', 'number', 'm', (v) => v.shape !== 'cyl'],
+  ['h', 'Alto', 'number', 'm'],
+  ['z0', 'Cota de la base (despegue)', 'number', 'm'],
+  ['x', 'Posición X del centro', 'number', 'm'],
+  ['y', 'Posición Y del centro', 'number', 'm'],
+  ['eps', 'Solidez ε', 'number', '', (v) => v.tipo === 'abierto'],
+  ['W', 'Peso sísmico', 'number', 'kN'],
+  ['nCols', 'Columnas de apoyo', 'number', 'n.º', (v) => +v.z0 > 0],
+  ['dCol', 'Diámetro de columna', 'number', 'm', (v) => +v.z0 > 0 && +v.nCols > 0],
+  ['wCol', 'Peso de columna', 'number', 'kN/m', (v) => +v.z0 > 0 && +v.nCols > 0],
+];
+
+export function renderVolumes(container, project, onChange) {
+  const list = project.generico.volumes;
+  const esc = (t) => String(t ?? '').replace(/"/g, '&quot;');
+  container.innerHTML = `<div class="vol-list">${list.map((v, i) => `
+    <fieldset class="vol" data-i="${i}">
+      <legend>${esc(v.name) || 'Volumen ' + (i + 1)}</legend>
+      <div class="vol-grid">${VOL_FIELDS.filter((f) => !f[4] || f[4](v)).map(([k, label, type, extra]) => {
+        if (type === 'select') return `<label>${label}<select data-k="${k}">${extra.map(([val, l]) => `<option value="${val}" ${v[k] === val ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
+        return `<label>${label}${extra ? ` <span class="unit">${extra}</span>` : ''}<input data-k="${k}" type="${type}" ${type === 'number' ? 'step="any"' : ''} value="${esc(v[k])}"></label>`;
+      }).join('')}</div>
+      <div class="vol-actions"><button class="btn small" data-dup="${i}">Duplicar</button><button class="btn small" data-del="${i}" ${list.length < 2 ? 'disabled' : ''}>Quitar</button></div>
+    </fieldset>`).join('')}
+    <button class="btn small wide" id="addVol">Agregar volumen</button></div>`;
+  container.querySelectorAll('fieldset.vol').forEach((fs) => {
+    const v = list[+fs.dataset.i];
+    fs.querySelectorAll('[data-k]').forEach((inp) => {
+      const k = inp.dataset.k;
+      const isSel = inp.tagName === 'SELECT';
+      inp.addEventListener(isSel ? 'change' : 'input', () => {
+        v[k] = inp.type === 'number' ? (inp.value === '' ? 0 : Number(inp.value)) : inp.value;
+        const structural = isSel || k === 'z0' || k === 'nCols';
+        if (k === 'name') fs.querySelector('legend').textContent = v.name;
+        onChange(structural);
+      });
+    });
+  });
+  container.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => { list.splice(+b.dataset.del, 1); onChange(true); }));
+  container.querySelectorAll('[data-dup]').forEach((b) => b.addEventListener('click', () => {
+    const v = list[+b.dataset.dup];
+    list.splice(+b.dataset.dup + 1, 0, { ...v, name: v.name + ' (copia)', z0: +v.z0 + +v.h });
+    onChange(true);
+  }));
+  container.querySelector('#addVol').addEventListener('click', () => {
+    const top = Math.max(0, ...list.map((v) => +v.z0 + +v.h));
+    list.push({ name: `Volumen ${list.length + 1}`, shape: 'rect', bx: 4, by: 4, h: 3, z0: top, x: 0, y: 0, tipo: 'solido', eps: 1, W: 50, nCols: 0, dCol: 0.3, wCol: 1 });
+    onChange(true);
+  });
 }

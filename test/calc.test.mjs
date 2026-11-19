@@ -192,3 +192,48 @@ test('Valla publicitaria en terreno y en azotea', () => {
   near(r.seismic.component.amp, 3);
   near(r.seismic.component.Fp, (0.4 * 2.5 * r.seismic.params.SDS * r.Wp * 3) / 2.5, 1e-6);
 });
+
+test('Perfil topográfico Fig. 6-4: H/2 a la distancia Lh de la cresta', () => {
+  const ridge = { type: 'ridge2D', H: 30, Lh: 50 };
+  near(W.terrainElevation(ridge, 0), 30);
+  near(W.terrainElevation(ridge, -50), 15);
+  near(W.terrainElevation(ridge, 100), 0);
+  const esc = { type: 'escarp2D', H: 30, Lh: 50 };
+  near(W.terrainElevation(esc, -50), 15);
+  near(W.terrainElevation(esc, 200), 30); // meseta a sotavento
+  const hill = { type: 'hill3D', H: 30, Lh: 50 };
+  near(W.terrainElevation(hill, 30, 40), 15); // r = 50
+});
+
+test('Valla sin postes: rígida (§15.4.2) y sin viento en postes', () => {
+  const p = defaultProject();
+  p.typology = 'valla';
+  p.valla.soporte = 'directa';
+  p.valla.clearance = 0;
+  const r = compute(p);
+  const x = r.seismic.directions.X;
+  near(x.Cs, 0.3 * r.seismic.params.SDS * r.seismic.params.I);
+  assert.equal(r.wind.posts.F, 0);
+  near(r.wind.sh, 1);
+  // s/h = 1: resultante 0.05h sobre el centro geométrico
+  near(r.wind.cases[0].z, p.valla.s / 2 + 0.05 * p.valla.s);
+});
+
+test('Volumen genérico: suma de franjas, columnas y elevación', () => {
+  const p = defaultProject();
+  p.typology = 'generico';
+  p.generico.volumes = [{ name: 'Caja', shape: 'rect', bx: 6, by: 6, h: 4, z0: 3, x: 0, y: 0, tipo: 'solido', eps: 1, W: 200, nCols: 4, dCol: 0.4, wCol: 2 }];
+  p.generico.slices = 4;
+  const r = compute(p);
+  const d = r.wind.directions.X;
+  assert.equal(d.rows.length, 4);
+  near(d.rows[0].z0, 3);
+  near(d.rows[3].z1, 7);
+  near(d.rows.reduce((s, x) => s + x.Af, 0), 24);
+  near(d.rows[0].Cf, W.cfChimney('square', 1)); // h/D = 4/6 → 1
+  assert.equal(d.cols.length, 1);
+  near(d.cols[0].Af, 4 * 0.4 * 3);
+  // peso total = volumen + columnas
+  near(r.seismic.directions.X.W, 200 + 4 * 2 * 3);
+  near(r.H, 7);
+});

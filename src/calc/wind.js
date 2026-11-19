@@ -51,7 +51,7 @@ export function Kz(z, exp) {
 // §6.5.7 Factor topográfico (Fig. 6-4)
 const TOPO = {
   ridge2D: { label: 'Cresta 2D', K1: { B: 1.3, C: 1.45, D: 1.55 }, gamma: 3, muUp: 1.5, muDown: 1.5 },
-  escarp2D: { label: 'Escarpe 2D', K1: { B: 0.75, C: 0.85, D: 0.95 }, gamma: 2.5, muUp: 1.5, muDown: 4 },
+  escarp2D: { label: 'Escarpe 2D / acantilado', K1: { B: 0.75, C: 0.85, D: 0.95 }, gamma: 2.5, muUp: 1.5, muDown: 4 },
   hill3D: { label: 'Colina 3D axisimétrica', K1: { B: 0.95, C: 1.05, D: 1.15 }, gamma: 4, muUp: 1.5, muDown: 1.5 },
 };
 export const TOPO_TYPES = Object.fromEntries(Object.entries(TOPO).map(([k, v]) => [k, v.label]));
@@ -327,4 +327,15 @@ export function cfOpenSign(eps, members = 'plano', Dsqrtq = 0) {
     return Dsqrtq <= 5.3 ? [1.2, 1.3, 1.5][row] : [0.8, 0.9, 1.1][row];
   }
   return [2.0, 1.8, 1.6][row];
+}
+
+
+/** Perfil del terreno de la Fig. 6-4 (elevación en función de x hacia sotavento y z lateral). */
+export function terrainElevation(topo, x, z = 0) {
+  const { H, Lh, type } = topo;
+  if (!(H > 0 && Lh > 0)) return 0;
+  const bump = (d) => (Math.abs(d) >= 2 * Lh ? 0 : H * 0.5 * (1 + Math.cos((Math.PI * d) / (2 * Lh))));
+  if (type === 'escarp2D') return x >= 0 ? H : bump(x);
+  if (type === 'hill3D') return bump(Math.hypot(x, z));
+  return bump(x);
 }

@@ -1,6 +1,7 @@
 // Visor 3D (Three.js). Convención: X y Z en planta, Y vertical.
 import * as THREE from 'three';
 import { OrbitControls } from './vendor/OrbitControls.js';
+import { terrainElevation } from '../calc/wind.js';
 
 const COL = {
   member: 0x2b3a44,
@@ -30,7 +31,11 @@ export class Viewer {
     this.scene.add(dl);
     this.model = new THREE.Group();
     this.loads = new THREE.Group();
-    this.scene.add(this.model, this.loads);
+    this.root = new THREE.Group(); // estructura + cargas (se traslada sobre el terreno)
+    this.root.add(this.model, this.loads);
+    this.terrain = new THREE.Group();
+    this.scene.add(this.root, this.terrain);
+    this.worldOffset = [0, 0, 0];
     this.labelScale = 1;
     this.showLabels = true;
     new ResizeObserver(() => this.resize()).observe(container);
@@ -132,7 +137,7 @@ export class Viewer {
   }
 
   fit(size, center) {
-    const c = new THREE.Vector3(...center);
+    const c = new THREE.Vector3(...center).add(new THREE.Vector3(...this.worldOffset));
     const r = size;
     this.camera.position.set(c.x - r * 1.55, c.y + r * 0.95, c.z + r * 1.8);
     this.controls.target.copy(c);
@@ -144,6 +149,7 @@ export class Viewer {
   ground(w, d) {
     const g = new THREE.GridHelper(Math.max(w, d) * 2.2, 22, 0xb7c4c7, 0xd4dcdc);
     g.position.set(w / 2, 0, d / 2);
+    g.userData.isGround = true;
     this.model.add(g);
   }
 
@@ -158,6 +164,7 @@ export class Viewer {
     else if (t === 'torre') this.buildTorre(res);
     else if (t === 'tanque') this.buildTanque(res);
     else if (t === 'valla') this.buildValla(res);
+    else if (t === 'generico') this.buildGenerico(res);
   }
 
   buildEdificio(res) {
@@ -315,6 +322,13 @@ export class Viewer {
     const edge = new THREE.LineSegments(new THREE.EdgesGeometry(panel.geometry), new THREE.LineBasicMaterial({ color: COL.member }));
     edge.position.copy(panel.position);
     this.model.add(panel, edge);
+    if (g.direct && g.c > 0) {
+      // estructura de soporte genérica bajo el anuncio (marco)
+      const pts = [];
+      for (const x of [cx - g.B / 2, cx, cx + g.B / 2]) pts.push([x, g.Hb, cz], [x, g.zb, cz]);
+      pts.push([cx - g.B / 2, g.Hb, cz], [cx, g.zb, cz], [cx, g.Hb, cz], [cx + g.B / 2, g.zb, cz]);
+      this.model.add(this.line(pts, COL.member));
+    }
     for (let i = 0; i < g.nP; i++) {
       const x = g.nP === 1 ? cx : cx - g.B / 2 + (g.B * (i + 0.5)) / g.nP;
       const geo = g.postShape === 'square' ? new THREE.BoxGeometry(g.D, g.zt - g.Hb, g.D) : new THREE.CylinderGeometry(g.D / 2, g.D / 2, g.zt - g.Hb, 24);
@@ -324,6 +338,57 @@ export class Viewer {
     }
     this.size = Math.max(g.zt, W) * 0.85;
     this.center = [cx, g.zt / 2, cz];
+  }
+
+
+  buildGenerico(res) {
+    const vols = res.geometry.volumes;
+    const xs = vols.flatMap((v) => [v.x - v.bx / 2, v.x + v.bx / 2]);
+    const zs = vols.flatMap((v) => [v.y - (v.shape === 'cyl' ? v.bx : v.by) / 2, v.y + (v.shape === 'cyl' ? v.bx : v.by) / 2]);
+    const x0 = Math.min(...xs);
+    const x1 = Math.max(...xs);
+    const z0 = Math.min(...zs);
+    const z1 = Math.max(...zs);
+    const grid = new THREE.GridHelper(Math.max(x1 - x0, z1 - z0, res.geometry.top) * 2.2, 22, 0xb7c4c7, 0xd4dcdc);
+    grid.position.set((x0 + x1) / 2, 0, (z0 + z1) / 2);
+    grid.userData.isGround = true;
+    this.model.add(grid);
+    vols.forEach((v, i) => {
+      const cyl = v.shape === 'cyl';
+      const open = v.tipo === 'abierto';
+      const geo = cyl ? new THREE.CylinderGeometry(v.bx / 2, v.bx / 2, v.h, 32, Math.max(1, Math.round(v.h / 1.5)), open) : new THREE.BoxGeometry(v.bx, v.h, v.by);
+      const color = [0x9fb3bb, 0xc3b49a, 0xa7b89c, 0xb3a2b8][i % 4];
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, transparent: true, opacity: open ? 0.12 : 0.55, roughness: 0.8, side: THREE.DoubleSide, depthWrite: !open }));
+      mesh.position.set(v.x, v.z0 + v.h / 2, v.y);
+      this.model.add(mesh);
+      const edges = new THREE.LineSegments(open ? new THREE.WireframeGeometry(geo) : new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: COL.member, transparent: open, opacity: open ? 0.7 : 1 }));
+      edges.position.copy(mesh.position);
+      this.model.add(edges);
+      if (v.nCols > 0 && v.z0 > 0) {
+        const n = v.nCols;
+        const pts = [];
+        if (cyl) {
+          for (let k = 0; k < n; k++) {
+            const a = (2 * Math.PI * k) / n;
+            pts.push([v.x + (v.bx / 2) * 0.85 * Math.cos(a), v.y + (v.bx / 2) * 0.85 * Math.sin(a)]);
+          }
+        } else {
+          // columnas repartidas en el perímetro (dos líneas a lo largo de X)
+          const per = Math.max(1, Math.ceil(n / 2));
+          for (let k = 0; k < n; k++) {
+            const row = k < per ? -1 : 1;
+            const idx = k < per ? k : k - per;
+            const cnt = k < per ? per : n - per;
+            const fx = cnt === 1 ? 0 : -0.5 + idx / (cnt - 1);
+            pts.push([v.x + fx * (v.bx - v.dCol), v.y + row * (v.by / 2 - v.dCol / 2)]);
+          }
+        }
+        for (const [px, pz] of pts) this.model.add(this.member([px, 0, pz], [px, v.z0, pz], Math.max(v.dCol / 2, 0.06), 0x6f7f86));
+      }
+      if (this.showLabels) this.model.add(this.label(v.name, [v.x, v.z0 + v.h + 0.4, v.y], '#1C2A33', 'rgba(255,255,255,0.85)'));
+    });
+    this.size = Math.max(x1 - x0, z1 - z0, res.geometry.top) * 0.95;
+    this.center = [(x0 + x1) / 2, res.geometry.top / 2, (z0 + z1) / 2];
   }
 
   // ------------------------------------------------------------- cargas
@@ -370,6 +435,29 @@ export class Viewer {
           const len = (L * l.F) / Fmax;
           this.arrow([-half(l.h) - len - 0.3, l.h, 0], [1, 0, 0], len, COL.quake, fmt(l.F));
         }
+      }
+    } else if (res.typology === 'generico') {
+      const vols = res.geometry.volumes;
+      const byName = Object.fromEntries(vols.map((v) => [v.name, v]));
+      let items;
+      let color;
+      if (lc === 'wx' || lc === 'wy') {
+        const d = res.wind.directions[lc === 'wx' ? 'X' : 'Y'];
+        items = [...d.rows.map((r) => ({ v: byName[r.vol], z: r.zc, F: r.F })), ...d.cols.map((c) => ({ v: byName[c.vol], z: c.z, F: c.F, label: `Columnas: ${fmt(c.F)}` }))];
+        color = COL.wind;
+      } else {
+        items = res.seismic.directions.X.levels.map((l) => ({ v: byName[l.vol], z: l.h, F: l.F }));
+        color = COL.quake;
+      }
+      const Fmax = Math.max(...items.map((i) => i.F), 1e-9);
+      for (const it of items) {
+        const len = Math.max((L * it.F) / Fmax, L * 0.08);
+        const v = it.v || vols[0];
+        // la punta toca la cara de barlovento de su propio volumen
+        const faceX = v.x - v.bx / 2;
+        const faceZ = v.y + (v.shape === 'cyl' ? v.bx : v.by) / 2;
+        if (lc === 'wy') this.arrow([v.x, it.z, faceZ + len + 0.3], [0, 0, -1], len, color, it.label || fmt(it.F));
+        else this.arrow([faceX - len - 0.3, it.z, v.y], [1, 0, 0], len, color, it.label || fmt(it.F));
       }
     } else if (res.typology === 'valla') {
       const g = res.geometry;
@@ -496,8 +584,120 @@ export class Viewer {
     }
   }
 
+
+  // ------------------------------------------------------------- topografía (Fig. 6-4)
+  /**
+   * Dibuja el relieve y coloca la estructura sobre él.
+   * topo: { enabled, type, H, Lh, x }; info: { kztBase, kztTop } para la etiqueta.
+   */
+  setTerrain(topo, info = {}) {
+    this.clear(this.terrain);
+    const enabled = topo && topo.enabled && +topo.H > 0 && +topo.Lh > 0;
+    this.model.traverse((o) => { if (o.userData.isGround) o.visible = !enabled; });
+    if (!enabled) {
+      this.worldOffset = [0, 0, 0];
+      this.root.position.set(0, 0, 0);
+      this.siteBox = null;
+      return;
+    }
+    const H = +topo.H;
+    const Lh = +topo.Lh;
+    const xs = +topo.x || 0;
+    const t = { type: topo.type, H, Lh };
+    const ex = Math.max(3 * Lh, Math.abs(xs) + 3 * this.size, 4 * H);
+    const x0 = Math.min(-ex, xs - 3 * this.size);
+    const x1 = Math.max(topo.type === 'escarp2D' ? Math.max(Lh, 3 * this.size + xs) : ex, xs + 3 * this.size);
+    const zw = topo.type === 'hill3D' ? Math.max(ex, 3 * this.size) : Math.max(1.6 * Lh, 3 * this.size, 2 * H);
+    const nx = 160;
+    const nz = topo.type === 'hill3D' ? 160 : 60;
+    const pos = [];
+    const col = [];
+    const idx = [];
+    const low = new THREE.Color(0x9fb88a);
+    const high = new THREE.Color(0xc9b48a);
+    const rock = new THREE.Color(0x8d8174);
+    for (let j = 0; j <= nz; j++) {
+      for (let i = 0; i <= nx; i++) {
+        const x = x0 + ((x1 - x0) * i) / nx;
+        const z = -zw + (2 * zw * j) / nz;
+        const y = terrainElevation(t, x, z);
+        pos.push(x, y, z);
+        // pendiente para sombrear el acantilado
+        const dy = (terrainElevation(t, x + 0.5, z) - terrainElevation(t, x - 0.5, z));
+        const c = low.clone().lerp(high, Math.min(1, y / H)).lerp(rock, Math.min(1, Math.abs(dy) * 1.2));
+        col.push(c.r, c.g, c.b);
+      }
+    }
+    for (let j = 0; j < nz; j++) {
+      for (let i = 0; i < nx; i++) {
+        const a = j * (nx + 1) + i;
+        idx.push(a, a + nx + 1, a + 1, a + 1, a + nx + 1, a + nx + 2);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: THREE.DoubleSide, flatShading: false }));
+    this.terrain.add(mesh);
+    // cresta y referencias
+    const crest = [];
+    if (topo.type === 'hill3D') {
+      for (let k = 0; k <= 64; k++) {
+        const a = (2 * Math.PI * k) / 64;
+        crest.push(new THREE.Vector3(Lh * Math.cos(a), terrainElevation(t, Lh, 0) + 0.05, Lh * Math.sin(a)));
+      }
+      this.terrain.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(crest), new THREE.LineBasicMaterial({ color: 0x5b6b73 })));
+    } else {
+      const ln = (x, color) => this.terrain.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, terrainElevation(t, x) + 0.05, -zw), new THREE.Vector3(x, terrainElevation(t, x) + 0.05, zw)]), new THREE.LineBasicMaterial({ color })));
+      ln(0, 0x1c2a33);
+      ln(-Lh, 0x5b6b73);
+    }
+    const lab = (txt, p, bg = 'rgba(255,255,255,0.9)', color = '#1C2A33') => this.terrain.add(this.label(txt, p, color, bg));
+    lab(`Cresta (x = 0) · H = ${H.toFixed(1)} m`, [0, H + H * 0.12, -zw * 0.6]);
+    lab(`Lh = ${Lh.toFixed(1)} m (cota H/2)`, [-Lh, H * 0.5 + H * 0.1, -zw * 0.6]);
+    // viento
+    const wy = H + this.size * 0.4;
+    const wl = Math.min(Lh, ex * 0.4);
+    const d = new THREE.Vector3(1, 0, 0);
+    const o = new THREE.Vector3(x0 + ex * 0.15, wy, -zw * 0.3);
+    const r = Math.max(0.15, this.size * 0.012);
+    const mat = new THREE.MeshStandardMaterial({ color: COL.wind });
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(r, r, wl, 10), mat);
+    shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
+    shaft.position.copy(o).add(d.clone().multiplyScalar(wl / 2));
+    const head = new THREE.Mesh(new THREE.ConeGeometry(r * 3, r * 8, 14), mat);
+    head.quaternion.copy(shaft.quaternion);
+    head.position.copy(o).add(d.clone().multiplyScalar(wl + r * 4));
+    this.terrain.add(shaft, head);
+    lab('Viento', o.toArray(), '#1F5FA8', '#ffffff');
+    // colocar la estructura
+    const [cx, , cz] = this.center;
+    const ground = terrainElevation(t, xs, 0);
+    this.worldOffset = [xs - cx, ground, -cz];
+    this.root.position.set(...this.worldOffset);
+    if (info.kztBase != null) {
+      lab(`Kzt = ${info.kztBase.toFixed(2)} (base) · ${info.kztTop.toFixed(2)} (cima)`, [xs, ground + this.center[1] * 2 + this.size * 0.25, 0], '#F2E330');
+    }
+    this.siteBox = { x0, x1, zw, H };
+  }
+
+  fitSite() {
+    if (!this.siteBox) return this.resetCamera();
+    const b = this.siteBox;
+    const c = new THREE.Vector3((b.x0 + b.x1) / 2, b.H / 2, 0);
+    const r = Math.max(b.x1 - b.x0, 2 * b.zw) * 0.55;
+    this.camera.position.set(c.x - r * 0.9, c.y + r * 0.75, c.z + r * 1.25);
+    this.controls.target.copy(c);
+    this.camera.near = r / 200;
+    this.camera.far = r * 30;
+    this.camera.updateProjectionMatrix();
+  }
+
   setView(name) {
-    const c = new THREE.Vector3(...this.center);
+    if (name === 'site') return this.fitSite();
+    const c = new THREE.Vector3(...this.center).add(new THREE.Vector3(...this.worldOffset));
     const r = this.size * 3.2;
     const pos = { iso: [-1.5, 0.9, 1.7], front: [0, 0.2, 2.2], side: [-2.2, 0.2, 0], top: [0.001, 2.4, 0] }[name];
     this.camera.position.set(c.x + (r * pos[0]) / 2.2, c.y + (r * pos[1]) / 2.2, c.z + (r * pos[2]) / 2.2);

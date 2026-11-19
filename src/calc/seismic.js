@@ -217,7 +217,11 @@ export function equivalentLateralForce(opts) {
     T = Tuser;
     Tsource = 'Período de la estructura no-edificio (§15.4.4)';
   }
-  const cs = seismicCoefficient({ p, R: system.R, T, kind });
+  let cs = seismicCoefficient({ p, R: system.R, T, kind });
+  if (kind !== 'building' && T < 0.06) {
+    // §15.4.2 estructuras no-edificio rígidas: V = 0.30·SDS·W·I
+    cs = { ...cs, Cs: 0.3 * p.SDS * p.I, governs: '§15.4.2 no-edificio rígido (T < 0.06 s): V = 0.30·SDS·W·I', rigid: true };
+  }
   const V = cs.Cs * W;
   const dist = verticalDistribution(levels, V, T);
   const Ev = 0.2 * p.SDS; // §12.4.2.2, multiplica a D

@@ -2,7 +2,7 @@
 import { REFERENCES, REP } from '../calc/rep.js';
 import { TYPOLOGIES } from '../calc/typologies.js';
 import { SITE_CLASSES } from '../calc/seismic.js';
-import { EXPOSURE, GCPI } from '../calc/wind.js';
+import { EXPOSURE, GCPI, TOPO_TYPES } from '../calc/wind.js';
 import { OCCUPANCY } from './forms.js';
 
 const f = (x, n = 2) => (x == null || Number.isNaN(+x) ? '—' : (+x).toFixed(n));
@@ -32,7 +32,7 @@ export function buildReportModel(project, res, images) {
     ['Categoría de ocupación', occLabel(project.site.occupancy)],
   ]);
   if (m.notas) para(m.notas);
-  describeGeometry(res, project, kv);
+  describeGeometry(res, project, kv, table);
 
   // 2 ---------------------------------------------------------------------
   h1('2. Normativa aplicada');
@@ -69,7 +69,7 @@ export function buildReportModel(project, res, images) {
   img(images.spectrum, 'Figura: espectro de respuesta de diseño (ASCE 7-05 §11.4.5) con los períodos de la estructura.');
 
   // 4 ---------------------------------------------------------------------
-  const kind = ['torre', 'tanque', 'valla'].includes(res.typology) ? 'nonbuilding' : 'building';
+  const kind = res.typology === 'generico' ? (res.seismic.kind === 'building' ? 'building' : 'nonbuilding') : ['torre', 'tanque', 'valla'].includes(res.typology) ? 'nonbuilding' : 'building';
   if (res.seismic.component) {
     const c = res.seismic.component;
     h1('4. Fuerzas sísmicas – componente no estructural sobre la edificación (ASCE 7-05 Cap. 13)');
@@ -97,7 +97,7 @@ export function buildReportModel(project, res, images) {
       para('En la dirección Y se usa el mismo sistema y período; el cortante basal es igual al de la dirección X.');
       continue;
     }
-    h2(kind === 'building' ? `Dirección ${dir}` : 'Análisis sísmico');
+    h2(res.typology === 'generico' ? 'Análisis sísmico (aplica en X e Y)' : kind === 'building' ? `Dirección ${dir}` : 'Análisis sísmico');
     if (res.typology === 'valla') para('Valla a nivel de terreno: estructura no-edificio no similar a edificios (Tabla 15.4-2, "Signs and billboards"), con el cortante mínimo de REP-2021 §5.2.1. Las alturas se miden desde la base de los postes.');
     kv([
       ['Sistema resistente', r.system.label, kind === 'building' ? 'Tabla 12.2-1' : 'Tabla 15.4-2'],
@@ -133,7 +133,7 @@ export function buildReportModel(project, res, images) {
     ['Factor de importancia I', f(ctx.I, 2), 'Tabla 6-1'],
     ['Categoría de exposición', ctx.exposure, '§6.5.6.3'],
     ['α / zg', `${ex.alpha} / ${f(ex.zg, 1)} m`, 'Tabla 6-2'],
-    ['Efecto topográfico', project.wind.topo.enabled ? `Sí (${project.wind.topo.type}, H = ${project.wind.topo.H} m, Lh = ${project.wind.topo.Lh} m, x = ${project.wind.topo.x} m)` : 'No (Kzt = 1.0)', '§6.5.7'],
+    ['Efecto topográfico', project.wind.topo.enabled ? `Sí (${TOPO_TYPES[project.wind.topo.type]}, H = ${project.wind.topo.H} m, Lh = ${project.wind.topo.Lh} m, x = ${project.wind.topo.x} m)` : 'No (Kzt = 1.0)', '§6.5.7'],
     ['Cerramiento / GCpi', `${ENCL[project.wind.enclosure]} / ±${f(GCPI[project.wind.enclosure], 2)}`, 'Fig. 6-5'],
   ]);
   eq('qz = 0.613·Kz·Kzt·Kd·V²·I  (N/m², V en m/s) – Ec. 6-15');
@@ -176,7 +176,7 @@ export function buildReportModel(project, res, images) {
   };
 }
 
-function describeGeometry(res, project, kv) {
+function describeGeometry(res, project, kv, table) {
   const g = res.geometry;
   if (res.typology === 'edificio') {
     const e = project.edificio;
@@ -202,6 +202,12 @@ function describeGeometry(res, project, kv) {
       ['Ancho base / punta', `${f(g.bBase, 2)} m / ${f(g.bTop, 2)} m`],
       ['Segmentos de cálculo', String(g.nSeg)],
     ]);
+  } else if (res.typology === 'generico') {
+    table('Volúmenes que componen la estructura', ['Volumen', 'Forma', 'Tipo', 'Dimensiones (m)', 'Cota base (m)', 'Centro X, Y (m)', 'W (kN)', 'Columnas'],
+      g.volumes.map((v) => [v.name, v.shape === 'cyl' ? 'Cilindro' : 'Prisma', v.tipo === 'abierto' ? `Abierto ε = ${f(v.eps, 2)}` : 'Sólido',
+        v.shape === 'cyl' ? `Ø${f(v.bx, 2)} × ${f(v.h, 2)}` : `${f(v.bx, 2)} × ${f(v.by, 2)} × ${f(v.h, 2)}`, f(v.z0, 2), `${f(v.x, 2)}, ${f(v.y, 2)}`, f(v.W, 1),
+        v.nCols > 0 && v.z0 > 0 ? `${v.nCols} × Ø${f(v.dCol, 2)} m` : '—']));
+    kv([['Altura total', `${f(g.top, 2)} m`]]);
   } else if (res.typology === 'valla') {
     const v = project.valla;
     kv([
@@ -209,7 +215,7 @@ function describeGeometry(res, project, kv) {
       ['Anuncio B × s', `${f(g.B, 2)} m × ${f(g.s, 2)} m (${v.panel === 'abierta' ? 'abierto' : 'sólido'}, ε = ${f(v.eps, 2)})`],
       ['Altura libre bajo el anuncio', `${f(g.c, 2)} m`],
       ['Borde superior sobre el terreno h', `${f(g.zt, 2)} m`],
-      ['Postes', `${g.nP} × ${g.postShape === 'square' ? 'cuadrado' : 'Ø'} ${f(g.D, 2)} m`],
+      ['Soporte', g.direct ? 'Sin postes: anclada directamente a la estructura / apoyada como muro' : `${g.nP} poste(s) ${g.postShape === 'square' ? 'cuadrado(s) de' : 'Ø'} ${f(g.D, 2)} m`],
       ['Peso total de la valla', `${f(res.Wp, 1)} kN`],
     ]);
   } else if (res.typology === 'tanque') {
@@ -249,8 +255,8 @@ function windSection(res, project, { h2, h3, kv, table, eq, para, note }) {
       ]);
       eq('F = G·[0.8·∫qz dz + |Cp,sot|·qh·Δh]·B  (fuerza neta de barlovento + sotavento por franja tributaria)');
       table(`Presiones y fuerzas de viento por nivel – dirección ${dir}`,
-        ['Nivel', 'z (m)', 'Kz', 'qz (kPa)', 'p barlov. (kPa)', 'p sotav. (kPa)', 'F (kN)', 'V (kN)', 'MT caso 2 (kN·m)'],
-        [...d.rows].reverse().map((r, i, arr) => [r.name, f(r.h, 2), f(r.Kz, 3), f(r.qz, 4), f(r.pww, 3), f(r.plw, 3), f(r.F, 2), f(r.Vstory, 2), f(d.torsion[arr.length - 1 - i].MT, 1)]));
+        ['Nivel', 'z (m)', 'Kz', 'Kzt', 'qz (kPa)', 'p barlov. (kPa)', 'p sotav. (kPa)', 'F (kN)', 'V (kN)', 'MT caso 2 (kN·m)'],
+        [...d.rows].reverse().map((r, i, arr) => [r.name, f(r.h, 2), f(r.Kz, 3), f(r.Kzt, 3), f(r.qz, 4), f(r.pww, 3), f(r.plw, 3), f(r.F, 2), f(r.Vstory, 2), f(d.torsion[arr.length - 1 - i].MT, 1)]));
       table(`Presiones en techo (Cp de Fig. 6-6, viento ${dir}) – succión neta con +GCpi`,
         ['Zona desde el borde de barlovento', 'Cp', 'p ext. (kPa)', 'p neta (kPa)'],
         d.roofZones.map((z) => [`${f(z.x0, 1)} – ${f(z.x1, 1)} m`, f(z.A, 2), f(z.pA, 3), f(z.netUplift, 3)]));
@@ -282,6 +288,15 @@ function windSection(res, project, { h2, h3, kv, table, eq, para, note }) {
       project.torre.kind === 'celosia' ? ['Segmento', 'z (m)', 'Kz', 'qz (kPa)', 'ε', 'Cf', 'Af (m²)', 'F (kN)', 'V (kN)'] : ['Segmento', 'z (m)', 'Kz', 'qz (kPa)', 'D (m)', 'Cf', 'Af (m²)', 'F (kN)', 'V (kN)'],
       [...d.segs].reverse().map((s) => [s.name, `${f(s.z0, 1)}–${f(s.z1, 1)}`, f(s.Kz, 3), f(s.qz, 4), project.torre.kind === 'celosia' ? f(s.eps, 3) : f(s.b, 2), f(s.Cf, 3), f(s.Af, 2), f(s.F, 2), f(s.Vstory, 2)]));
     if (d.appForces.length) table('Fuerzas sobre accesorios', ['Accesorio', 'z (m)', 'qz (kPa)', 'Cf·A (m²)', 'F (kN)'], d.appForces.map((a) => [a.name, f(a.z, 1), f(a.qz, 4), f(a.EPA, 2), f(a.F, 2)]));
+  } else if (res.typology === 'generico') {
+    para('Cada volumen se divide en franjas horizontales; la fuerza en cada franja es F = q̄z·G·Cf·Af (ASCE 7-05 §6.5.15). Cf: prismas sólidos y cilindros según Fig. 6-21 (h/D del volumen); volúmenes abiertos según Fig. 6-23 con la solidez ε. Las columnas de apoyo se evalúan como cilindros (Fig. 6-21).');
+    for (const [dir, d] of Object.entries(res.wind.directions)) {
+      h2(`Viento en dirección ${dir}`);
+      kv([...gustRows(d.gust), ['Cortante basal', `${f(d.Vbase, 1)} kN`], ['Momento de volteo', `${f(d.Mbase, 1)} kN·m`], ['Carga mínima 0.48 kPa·A proyectada', `${f(d.Vmin, 1)} kN`, '§6.1.4.1']]);
+      table(`Fuerzas de viento por franja – dirección ${dir}`, ['Volumen', 'z (m)', 'Kz', 'q̄z (kPa)', 'Kd', 'Cf', 'Af (m²)', 'F (kN)'],
+        [...d.rows].reverse().map((r) => [r.vol, `${f(r.z0, 2)}–${f(r.z1, 2)}`, f(r.Kz, 3), f(r.qz, 4), f(r.Kd, 2), `${f(r.Cf, 3)} (${r.fig})`, f(r.Af, 2), f(r.F, 2)]));
+      if (d.cols.length) table(`Columnas de apoyo – dirección ${dir}`, ['Volumen', 'Columnas', 'q̄z (kPa)', 'Cf', 'Af (m²)', 'F (kN)'], d.cols.map((c) => [c.vol, `${c.n} × Ø${f(c.d, 2)} m`, f(c.qz, 4), f(c.Cf, 3), f(c.Af, 2), f(c.F, 2)]));
+    }
   } else if (res.typology === 'valla') {
     const d = res.wind;
     kv([
@@ -299,7 +314,7 @@ function windSection(res, project, { h2, h3, kv, table, eq, para, note }) {
         d.caseC.regions.map((r) => [`${f(r.x0, 2)} – ${f(r.x1, 2)} m${r.starred ? ' *' : ''}`, f(r.Cf, 3), f(r.Cfnet, 3), f(r.F, 2)]));
       if (project.valla.Lr > 0) para('* Valor reducido por esquina de retorno (Fig. 6-20).');
     }
-    table('Viento sobre los postes expuestos (Fig. 6-21)', ['Elemento', 'q̄z (kPa)', 'Cf', 'Af (m²)', 'F (kN)'], [[`${d.posts.n} poste(s) Ø/lado ${f(d.posts.D, 2)} m`, f(d.posts.q, 4), f(d.posts.Cf, 3), f(d.posts.Af, 2), f(d.posts.F, 2)]]);
+    if (d.posts.n > 0) table('Viento sobre los postes expuestos (Fig. 6-21)', ['Elemento', 'q̄z (kPa)', 'Cf', 'Af (m²)', 'F (kN)'], [[`${d.posts.n} poste(s) Ø/lado ${f(d.posts.D, 2)} m`, f(d.posts.q, 4), f(d.posts.Cf, 3), f(d.posts.Af, 2), f(d.posts.F, 2)]]);
     kv([
       ['Caso que gobierna (fuerza)', d.governing],
       ['Cortante en la base de la valla', `${f(d.Vbase, 2)} kN`],

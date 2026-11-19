@@ -200,3 +200,12 @@ label.inline select, label.inline input[type=number] { width: auto; }
 .icon-btn { border: 0; background: transparent; cursor: pointer; color: var(--muted); font-size: 16px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+.vol-list { display: grid; gap: 10px; margin-top: 12px; }
+fieldset.vol { border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px 10px; margin: 0; }
+fieldset.vol legend { font-weight: 600; font-size: 13.5px; padding: 0 4px; }
+.vol-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; }
+.vol-grid label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
+.vol-grid label .unit { font-size: 11px; }
+.vol-grid input, .vol-grid select { font-size: 13px; padding: 4px 6px; }
+.vol-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }

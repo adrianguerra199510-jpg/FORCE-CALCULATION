@@ -2,7 +2,8 @@
 import { compute, defaultProject, TYPOLOGIES } from '../calc/typologies.js';
 import { lookup } from '../calc/maplookup.js';
 import { basicWindSpeed } from '../calc/rep.js';
-import { SECTIONS, renderFields } from './forms.js';
+import { Kzt } from '../calc/wind.js';
+import { SECTIONS, renderFields, renderVolumes } from './forms.js';
 import { Viewer } from './viewer3d.js';
 import { MapView } from './mapview.js';
 import { spectrumSVG, attachSpectrumHover, profileSVG, svgToPng } from './charts.js';
@@ -93,6 +94,13 @@ function renderAllForms() {
 function renderAppurtenances() {
   const wrap = $('#appWrap');
   const p = state.project;
+  if (p.typology === 'generico') {
+    return renderVolumes(wrap, p, (rerender) => {
+      state.dirty = true;
+      if (rerender) renderAppurtenances();
+      recompute();
+    });
+  }
   if (p.typology !== 'torre') return (wrap.innerHTML = '');
   const list = p.torre.appurtenances;
   wrap.innerHTML = `<div class="app-list"><div class="app-row app-head"><span>Accesorio</span><span>z (m)</span><span>Cf·A (m²)</span><span>W (kN)</span><span></span></div>
@@ -169,11 +177,26 @@ function doCompute(resetCamera) {
   renderSummary();
   if (!state.res) return;
   viewer.setModel(state.res);
-  if (resetCamera) viewer.resetCamera();
+  applyTerrain();
+  if (resetCamera || state.topoKey !== topoKey()) viewer.resetCamera();
+  state.topoKey = topoKey();
   renderLoadCases();
   applyLoadCase();
   renderSpectrum();
   renderTables();
+}
+
+function topoKey() {
+  const t = state.project.wind.topo;
+  return t.enabled ? `${t.type}|${t.H}|${t.Lh}|${t.x}` : 'off';
+}
+
+function applyTerrain() {
+  const t = state.project.wind.topo;
+  const H = state.res.H;
+  const exp = state.project.wind.exposure;
+  viewer.setTerrain(t, { kztBase: Kzt(0, exp, t), kztTop: Kzt(H, exp, t) });
+  $('#btnSite').hidden = !(t.enabled && +t.H > 0 && +t.Lh > 0);
 }
 
 function renderWindV() {
@@ -186,6 +209,7 @@ function loadCaseList(res) {
   switch (res.typology) {
     case 'edificio': return [['wx', 'Viento X', 'wind'], ['wy', 'Viento Y', 'wind'], ['sx', 'Sismo X', 'quake'], ['sy', 'Sismo Y', 'quake']];
     case 'nave': return [['wt', 'Viento transversal', 'wind'], ['wl', 'Viento longitudinal', 'wind'], ['sx', 'Sismo X', 'quake'], ['sy', 'Sismo Y', 'quake']];
+    case 'generico': return [['wx', 'Viento X', 'wind'], ['wy', 'Viento Y', 'wind'], ['s', 'Sismo', 'quake']];
     case 'valla': return [['wA', 'Viento casos A/B', 'wind'], ...(res.wind.caseC ? [['wC', 'Viento caso C', 'wind']] : []), ['s', 'Sismo', 'quake']];
     default: return [['w', 'Viento', 'wind'], ['s', 'Sismo', 'quake']];
   }
@@ -215,6 +239,10 @@ function applyLoadCase() {
     txt = lc.startsWith('w') ? `Viento ${dir} (servicio): cortante basal <b>${f(r.wind.directions[dir].Vbase, 1)} kN</b>, G = ${f(r.wind.directions[dir].G, 3)}` : `Sismo ${dir} (resistencia): V = <b>${f(r.seismic.directions[dir].V, 1)} kN</b>, Cs = ${f(r.seismic.directions[dir].Cs, 4)}`;
   } else if (r.typology === 'nave') {
     txt = lc.startsWith('w') ? `Presión neta por superficie (kPa). Azul = presión, morado = succión. GCpi ${$('#optInternal').value === 'pos' ? '+' : '−'}${f(r.wind.gcpi, 2)}` : `Sismo: V = <b>${f(r.seismic.directions.X.V, 1)} kN</b> (≈ ${f(r.seismic.perFrame, 1)} kN por marco interior)`;
+  } else if (r.typology === 'generico') {
+    const d = r.wind.directions[lc === 'wy' ? 'Y' : 'X'];
+    const sx = r.seismic.directions.X;
+    txt = lc.startsWith('w') ? `Viento ${lc === 'wy' ? 'Y' : 'X'} (servicio): cortante basal <b>${f(d.Vbase, 1)} kN</b>, momento <b>${f(d.Mbase, 1)} kN·m</b>, G = ${f(d.G, 3)}` : `Sismo: V = <b>${f(sx.V, 1)} kN</b>, Cs = ${f(sx.Cs, 4)}, T = ${f(sx.T, 3)} s (aplica en X e Y)`;
   } else if (r.typology === 'valla') {
     const sm = seismicMain(r);
     txt = lc.startsWith('w')
@@ -250,6 +278,9 @@ function renderSummary() {
   } else if (r.typology === 'nave') {
     const maxUp = Math.min(...r.wind.transversal.cases.concat(r.wind.longitudinal.cases).filter((c) => c.surface.startsWith('Techo')).flatMap((c) => [c.pPos, c.pNeg]));
     windK = `<div class="kpi wind full"><div class="v">${f(maxUp, 2)}</div><div class="l">kPa · succión neta máxima en techo</div></div>`;
+  } else if (r.typology === 'generico') {
+    windK = `<div class="kpi wind"><div class="v">${f(r.wind.directions.X.Vbase, 1)}</div><div class="l">kN · viento X</div></div>
+             <div class="kpi wind"><div class="v">${f(r.wind.directions.Y.Vbase, 1)}</div><div class="l">kN · viento Y</div></div>`;
   } else if (r.typology === 'valla') {
     windK = `<div class="kpi wind"><div class="v">${f(r.wind.Vbase, 1)}</div><div class="l">kN · cortante por viento</div></div>
              <div class="kpi wind"><div class="v">${f(r.wind.Mbase, 0)}</div><div class="l">kN·m · volteo por viento</div></div>`;
@@ -279,6 +310,7 @@ function renderSummary() {
     <dl class="plist">
       <dt>V de diseño</dt><dd>${f(r.wind.ctx.Vkmh, 1)} km/h</dd>
       <dt>Exposición / Kd / I</dt><dd>${r.wind.ctx.exposure} / ${f(r.wind.ctx.Kd, 2)} / ${f(r.wind.ctx.I, 2)}</dd>
+      ${state.project.wind.topo.enabled ? `<dt>Kzt base / cima</dt><dd>${f(Kzt(0, r.wind.ctx.exposure, state.project.wind.topo), 2)} / ${f(Kzt(r.H, r.wind.ctx.exposure, state.project.wind.topo), 2)}</dd>` : ''}
     </dl>
     ${r.warnings.length ? `<h3>Revisar</h3><ul class="warnings">${r.warnings.map((w) => `<li>${w}</li>`).join('')}</ul>` : ''}`;
 }
@@ -456,6 +488,10 @@ function hideToast() {
 }
 
 // ------------------------------------------------------------------ autoprueba (FC_SELFTEST)
+function r0(r) {
+  return r.wind.directions ? r.wind.directions.X.Vbase : r.wind.Vbase;
+}
+
 async function selfTest() {
   const log = (m) => window.api.selftest.log(m);
   const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
@@ -494,6 +530,29 @@ async function selfTest() {
     const p = await exportReport('pdf');
     await log(`${variant}: docx=${d} pdf=${p}`);
   }
+  // escenarios topográficos
+  const topoCases = [
+    ['edificio', { enabled: true, type: 'escarp2D', H: 35, Lh: 30, x: 15 }, 'acantilado'],
+    ['torre', { enabled: true, type: 'hill3D', H: 60, Lh: 120, x: 0 }, 'colina'],
+  ];
+  for (const [typ, topo, name] of topoCases) {
+    state.project.typology = typ;
+    state.project.wind.topo = topo;
+    state.project.meta.nombre = `Prueba ${typ} ${name}`;
+    renderAllForms();
+    doCompute(true);
+    state.loadCase = loadCaseList(state.res)[0][0];
+    renderLoadCases();
+    applyLoadCase();
+    await wait(500);
+    await window.api.selftest.capture(`topo-${name}`);
+    viewer.setView('site');
+    await wait(500);
+    await window.api.selftest.capture(`topo-${name}-sitio`);
+    await log(`topo ${name}: Kzt base=${f(Kzt(0, 'C', topo), 3)} Vviento=${f(r0(state.res), 1)}`);
+    if (name === 'acantilado') await exportReport('pdf');
+  }
+  state.project.wind.topo = { enabled: false, type: 'hill3D', H: 0, Lh: 0, x: 0 };
   await log('OK');
   await window.api.selftest.done();
 }

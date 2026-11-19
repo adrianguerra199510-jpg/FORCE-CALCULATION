@@ -2,7 +2,7 @@
 import * as W from './wind.js';
 import * as S from './seismic.js';
 import { REP } from './rep.js';
-import { findSystem, systemWarnings } from './systems.js';
+import { findSystem, systemWarnings, BUILDING_SYSTEMS } from './systems.js';
 
 const G_ACC = 9.81;
 const GAMMA_W = 9.81; // kN/m³
@@ -13,6 +13,7 @@ export const TYPOLOGIES = {
   torre: 'Torre de celosía / chimenea / poste',
   tanque: 'Tanque elevado',
   valla: 'Valla publicitaria (en terreno o sobre edificación)',
+  generico: 'Volumen genérico (cuerpos configurables)',
 };
 
 function sum(a, f = (x) => x) {
@@ -453,7 +454,8 @@ export function computeValla(project) {
   const B = +v.B;
   const s_ = +v.s;
   const c = +v.clearance;
-  const nP = Math.max(1, Math.round(+v.nPosts));
+  const direct = v.soporte === 'directa'; // sin postes: anclada a la estructura o apoyada en el terreno
+  const nP = direct ? 0 : Math.max(1, Math.round(+v.nPosts));
   const D = +v.postD;
   const zb = Hb + c; // borde inferior del anuncio sobre el terreno
   const zt = zb + s_; // borde superior
@@ -463,7 +465,7 @@ export function computeValla(project) {
   const wPostTot = nP * +v.wPost;
   const levels = [];
   const nSeg = 4;
-  for (let i = 0; i < nSeg; i++) levels.push({ name: `Poste ${i + 1}`, h: ((i + 0.5) * c) / nSeg, w: (wPostTot * c) / nSeg });
+  if (nP > 0 && c > 0) for (let i = 0; i < nSeg; i++) levels.push({ name: `Poste ${i + 1}`, h: ((i + 0.5) * c) / nSeg, w: (wPostTot * c) / nSeg });
   levels.push({ name: 'Anuncio', h: c + s_ / 2, w: +v.Wpanel + wPostTot * s_ });
   const Wp = sum(levels, (l) => l.w);
   let T;
@@ -471,6 +473,9 @@ export function computeValla(project) {
   if (v.periodMethod === 'manual') {
     T = +v.T;
     Tmethod = 'Período ingresado por el usuario';
+  } else if (direct || v.periodMethod === 'rigida') {
+    T = 0.05;
+    Tmethod = 'Anclaje directo: se considera rígida (T < 0.06 s, §15.4.2)';
   } else {
     T = rayleighPeriod(Hs, levels, () => nP * +v.EIpost);
     Tmethod = `Rayleigh (voladizo de ${nP} poste${nP > 1 ? 's' : ''}, EI = ${nP} × ${(+v.EIpost).toExponential(2)} kN·m²)`;
@@ -543,8 +548,9 @@ export function computeValla(project) {
   // postes expuestos bajo el anuncio
   const qPost = c > 0 ? W.integrateQ(Hb, zb, ctx) / c : 0;
   const CfPost = W.cfChimney(v.postShape === 'square' ? 'square' : 'round', Hs / D, 'moderadamente liso', D * Math.sqrt(qPost * 1000));
-  const Fposts = nP * qPost * G * CfPost * D * c;
+  const Fposts = nP > 0 ? nP * qPost * G * CfPost * D * c : 0;
   wind.posts = { n: nP, D, q: qPost, Cf: CfPost, Af: nP * D * c, F: Fposts, z: Hb + c / 2 };
+  if (direct && c > 0) warnings.push(`Valla sin postes con ${c.toFixed(2)} m libres bajo el anuncio: incluir el viento y el peso de la estructura de soporte que la separa del ${onRoof ? 'techo' : 'terreno'}.`);
   const gov = wind.cases.reduce((a, b) => (b.F > a.F ? b : a));
   wind.governing = gov.name;
   wind.Vbase = gov.F + Fposts;
@@ -557,7 +563,118 @@ export function computeValla(project) {
   return {
     typology: 'valla', H: zt, levels, T, Wp, seismic, wind, warnings,
     combos: S.loadCombinations(p.SDS),
-    geometry: { onRoof, Hb, nSt, Bx: +v.Bx, By: +v.By, firstStoryHeight: +v.firstStoryHeight, storyHeight: +v.storyHeight, B, s: s_, c, nP, D, zb, zt, postShape: v.postShape, panel: v.panel },
+    geometry: { direct, onRoof, Hb, nSt, Bx: +v.Bx, By: +v.By, firstStoryHeight: +v.firstStoryHeight, storyHeight: +v.storyHeight, B, s: s_, c, nP, D, zb, zt, postShape: v.postShape, panel: v.panel },
+  };
+}
+
+// =============================================================================
+// VOLUMEN GENÉRICO: lista de cuerpos (prisma o cilindro, sólidos o abiertos),
+// a cualquier cota sobre el terreno y con columnas de apoyo opcionales.
+// Viento: §6.5.15 (F = qz·G·Cf·Af) por franjas; sismo: FLE con el sistema elegido.
+// =============================================================================
+export function computeGenerico(project) {
+  const gp = project.generico;
+  const vols = (gp.volumes || []).filter((v) => +v.h > 0 && +v.bx > 0 && (v.shape === 'cyl' || +v.by > 0));
+  if (!vols.length) throw new Error('Agrega al menos un volumen con dimensiones mayores que cero.');
+  const nS = Math.max(1, Math.round(+gp.slices || 4));
+  const top = Math.max(...vols.map((v) => +v.z0 + +v.h));
+
+  // ---- masas
+  const levels = [];
+  for (const v of vols) {
+    const dz = +v.h / nS;
+    for (let k = 0; k < nS; k++) levels.push({ name: `${v.name} ${k + 1}/${nS}`, h: +v.z0 + (k + 0.5) * dz, w: +v.W / nS, vol: v.name });
+    if (+v.nCols > 0 && +v.z0 > 0) levels.push({ name: `${v.name} – columnas`, h: +v.z0 / 2, w: +v.nCols * +v.wCol * +v.z0, vol: v.name });
+  }
+  levels.sort((a, b) => a.h - b.h);
+
+  // ---- sismo
+  const p = seismicCommon(project);
+  const warnings = stdWarnings(p, project);
+  const sys = findSystem(gp.system);
+  const kind = BUILDING_SYSTEMS.some((b) => b.id === sys.id) ? 'building' : 'nonbuildingNotSimilar';
+  let Tuser = null;
+  let Tsrc = null;
+  if (gp.periodMethod === 'manual') Tuser = +gp.T;
+  else if (gp.periodMethod === 'rigida') {
+    Tuser = 0.05;
+    Tsrc = 'Rígida (T < 0.06 s)';
+  } else if (kind !== 'building') {
+    Tuser = +gp.T;
+    warnings.push('Para estructuras no-edificio no se permite Ta = Ct·hn^x (§15.4.4): se usa el período ingresado.');
+  }
+  const r = S.equivalentLateralForce({ p, system: sys, hn: top, periodType: sys.periodType || 'other', Tuser, levels, kind });
+  if (Tsrc) r.Tsource = Tsrc;
+  warnings.push(...systemWarnings(sys, p.sdc));
+  const seismic = { params: p, directions: { X: r }, kind };
+
+  // ---- viento
+  const n1 = 1 / r.T;
+  const wind = { directions: {}, n1 };
+  for (const dir of ['X', 'Y']) {
+    const rows = [];
+    const cols = [];
+    let Bmax = 0;
+    let Lmax = 0;
+    for (const v of vols) {
+      const cyl = v.shape === 'cyl';
+      Bmax = Math.max(Bmax, cyl ? +v.bx : dir === 'X' ? +v.by : +v.bx);
+      Lmax = Math.max(Lmax, cyl ? +v.bx : dir === 'X' ? +v.bx : +v.by);
+    }
+    const ctx0 = windCtx(project, W.KD.building);
+    const gust = W.gustFactor({ exposure: ctx0.exposure, h: top, B: Bmax, L: Lmax, n1, beta: +project.wind.beta || 0.02, V: ctx0.V, rigidMode: project.wind.rigidMode });
+    const G = gust.G;
+    for (const v of vols) {
+      const cyl = v.shape === 'cyl';
+      const open = v.tipo === 'abierto';
+      const bperp = cyl ? +v.bx : dir === 'X' ? +v.by : +v.bx;
+      const Kd = open ? W.KD.lattice : cyl ? W.KD.chimneyRound : W.KD.chimneySquare;
+      const ctx = windCtx(project, Kd);
+      const dz = +v.h / nS;
+      for (let k = 0; k < nS; k++) {
+        const z0 = +v.z0 + k * dz;
+        const z1 = z0 + dz;
+        const q = W.integrateQ(z0, z1, ctx) / dz;
+        let Cf;
+        let fig;
+        if (open) {
+          Cf = W.cfTrussTower(cyl ? 'triangular' : 'square', +v.eps).Cf;
+          fig = 'Fig. 6-23';
+        } else if (cyl) {
+          Cf = W.cfChimney('round', Math.max(1, +v.h / bperp), gp.surface || 'moderadamente liso', bperp * Math.sqrt(q * 1000));
+          fig = 'Fig. 6-21';
+        } else {
+          Cf = W.cfChimney('square', Math.max(1, +v.h / bperp));
+          fig = 'Fig. 6-21';
+        }
+        const Af = (open ? +v.eps : 1) * bperp * dz;
+        rows.push({ vol: v.name, z0, z1, zc: (z0 + z1) / 2, Kz: W.Kz((z0 + z1) / 2, ctx.exposure), qz: q, Kd, Cf, fig, Af, F: q * G * Cf * Af });
+      }
+      if (+v.nCols > 0 && +v.z0 > 0) {
+        const q = W.integrateQ(0, +v.z0, ctx0) / +v.z0;
+        const d = +v.dCol;
+        const Cf = W.cfChimney('round', +v.z0 / d, 'moderadamente liso', d * Math.sqrt(q * 1000));
+        const Af = +v.nCols * d * +v.z0;
+        cols.push({ vol: v.name, n: +v.nCols, d, z: +v.z0 / 2, qz: q, Cf, Af, F: q * G * Cf * Af });
+      }
+    }
+    const Vbase = sum(rows, (x) => x.F) + sum(cols, (x) => x.F);
+    const Mbase = sum(rows, (x) => x.F * x.zc) + sum(cols, (x) => x.F * x.z);
+    const Aproj = sum(rows, (x) => x.Af) + sum(cols, (x) => x.Af);
+    const Vmin = W.MIN_WIND_PRESSURE * Aproj;
+    if (Vbase < Vmin) warnings.push(`Viento ${dir}: el cortante (${Vbase.toFixed(1)} kN) es menor que la carga mínima de 0.48 kPa sobre el área proyectada (${Vmin.toFixed(1)} kN, §6.1.4.1).`);
+    wind.directions[dir] = { ctx: ctx0, gust, G, rows, cols, Vbase, Mbase, Vmin };
+  }
+  wind.ctx = wind.directions.X.ctx;
+  if (vols.some((v) => v.shape !== 'cyl' && v.tipo !== 'abierto' && Math.abs(+v.bx / +v.by - 1) > 0.25)) {
+    warnings.push('Prismas rectangulares no cuadrados: se usa Cf de sección cuadrada de la Fig. 6-21 (viento normal a la cara). Para edificios cerrados apoyados en el terreno se recomienda la tipología "Edificio" (Cp de la Fig. 6-6).');
+  }
+  warnings.push('Volumen genérico: no se considera apantallamiento entre cuerpos ni entre columnas (conservador).');
+
+  return {
+    typology: 'generico', H: top, levels, seismic, wind, warnings,
+    combos: S.loadCombinations(p.SDS),
+    geometry: { volumes: vols.map((v) => ({ ...v, bx: +v.bx, by: +v.by, h: +v.h, z0: +v.z0, x: +v.x || 0, y: +v.y || 0, nCols: +v.nCols || 0, dCol: +v.dCol, eps: +v.eps })), top },
   };
 }
 
@@ -568,6 +685,7 @@ export function compute(project) {
     case 'torre': return computeTorre(project);
     case 'tanque': return computeTanque(project);
     case 'valla': return computeValla(project);
+    case 'generico': return computeGenerico(project);
     default: throw new Error('Tipología desconocida: ' + project.typology);
   }
 }
@@ -605,8 +723,15 @@ export function defaultProject() {
     valla: {
       apoyo: 'terreno', nStories: 4, firstStoryHeight: 3.5, storyHeight: 3.0, Bx: 18, By: 14,
       B: 12, s: 4, clearance: 8, panel: 'solida', eps: 1.0, members: 'plano', memberD: 0.05, Lr: 0,
-      nPosts: 1, postShape: 'round', postD: 0.9, Wpanel: 45, wPost: 3.5,
+      soporte: 'postes', nPosts: 1, postShape: 'round', postD: 0.9, Wpanel: 45, wPost: 3.5,
       periodMethod: 'rayleigh', EIpost: 1.2e6, T: 1.0, system: 'P2', ap: 2.5, Rp: 2.5, Ip: 1.0,
+    },
+    generico: {
+      system: 'P1', periodMethod: 'manual', T: 0.4, slices: 4, surface: 'moderadamente liso',
+      volumes: [
+        { name: 'Cuerpo principal', shape: 'rect', bx: 12, by: 8, h: 6, z0: 5, x: 0, y: 0, tipo: 'solido', eps: 1, W: 900, nCols: 6, dCol: 0.5, wCol: 5 },
+        { name: 'Cuerpo superior', shape: 'cyl', bx: 4, by: 4, h: 5, z0: 11, x: 3, y: 0, tipo: 'abierto', eps: 0.3, W: 60, nCols: 0, dCol: 0.3, wCol: 1 },
+      ],
     },
   };
 }
