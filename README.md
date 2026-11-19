@@ -29,12 +29,9 @@ Disposiciones propias del REP-2021 incluidas:
 ## Entorno de exposición en el visor
 
 La casilla **Entorno** dibuja un esquema de la categoría de exposición alrededor de la
-estructura: B con edificaciones y arbolado denso, C con terreno abierto y obstáculos
-dispersos, y D con agua a barlovento. Las cargas de barlovento se dibujan sobre la propia
-estructura como un perfil (flechas apiladas en altura con su envolvente, proporcionales a
-la presión qz, que crece con la altura según la exposición). Con topografía activa, la
-vista **Sitio** muestra perfiles de velocidad a escala del relieve: barlovento lejano
-(Kzt = 1), cresta y ubicación de la estructura.
+estructura (B con edificaciones y arbolado denso, C con terreno abierto y obstáculos
+dispersos, D con agua a barlovento) y una flecha que indica la dirección del viento del
+caso de carga activo, con la exposición (α y zg de la Tabla 6-2).
 
 ## Topografía en el visor
 
@@ -71,13 +68,13 @@ Precisión, medida con validación cruzada sobre las propias etiquetas de los ma
 
 ## Descarga (Windows)
 
-**[ForceCalculation-REP2021-Setup-1.2.3.exe](https://github.com/adrianguerra199510-jpg/FORCE-CALCULATION/raw/claude/nifty-einstein-5vo4up/instalador/ForceCalculation-REP2021-Setup-1.2.3.exe)** (93 MB, Windows 10/11 de 64 bits)
+**[ForceCalculation-REP2021-Setup-1.2.4.exe](https://github.com/adrianguerra199510-jpg/FORCE-CALCULATION/raw/claude/nifty-einstein-5vo4up/instalador/ForceCalculation-REP2021-Setup-1.2.4.exe)** (93 MB, Windows 10/11 de 64 bits)
 
 1. Descarga y ejecuta el instalador. Permite elegir la carpeta y crea accesos directos en el escritorio y en el menú Inicio.
 2. El instalador no está firmado digitalmente. Windows SmartScreen mostrará "Windows protegió su PC": haz clic en **Más información → Ejecutar de todas formas**.
 3. Los proyectos se guardan como `.fcp`; el instalador asocia esa extensión con la app.
 
-SHA-256: `7918174066d1dfe6d6a6feaccb2af10620283422d1f7917b38134bb621b28ad7`
+SHA-256: `eb05397357483540be6e67560f7d7acf4060964558963d8a058f3c7aa4b14d86`
 
 ## Instalación y uso (desde el código)
 
@@ -97,7 +94,7 @@ Generar el instalador de Windows (desde Windows):
 npm run dist
 ```
 
-El instalador queda en `dist/ForceCalculation-REP2021-Setup-1.2.3.exe`.
+El instalador queda en `dist/ForceCalculation-REP2021-Setup-1.2.4.exe`.
 
 Flujo de trabajo:
 

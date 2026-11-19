@@ -240,7 +240,7 @@ function windDirFor(r, lc) {
     case 'generico':
       return lc === 'wy' ? { axis: 'Z', sign: -1, kztApplies: !parallel2D } : lc === 'wx' ? { axis: 'X', sign: 1, kztApplies: true } : null;
     case 'nave':
-      return lc === 'wl' ? { axis: 'Z', sign: -1, kztApplies: !parallel2D } : lc === 'wt' ? { axis: 'X', sign: 1, kztApplies: true } : null;
+      return lc === 'wl' ? { axis: 'Z', sign: 1, kztApplies: !parallel2D } : lc === 'wt' ? { axis: 'X', sign: 1, kztApplies: true } : null;
     case 'valla':
       return { axis: 'Z', sign: -1, kztApplies: true };
     default:
@@ -540,6 +540,15 @@ async function selfTest() {
       renderLoadCases();
       applyLoadCase();
       await wait(350);
+      if (typ === 'nave' && lc[2] === 'wind') {
+        // validación: carga en las 4 caras verticales y en ambos faldones del techo
+        const sf = viewer.naveSurfaces || [];
+        const walls = new Set(sf.filter((x) => Math.abs(x.n[1]) < 0.5).map((x) => `${Math.round(x.n[0])},${Math.round(x.n[2])}`));
+        const roofL = sf.some((x) => x.n[1] > 0.5 && x.n[0] < 0);
+        const roofR = sf.some((x) => x.n[1] > 0.5 && x.n[0] > 0);
+        const ok = walls.size === 4 && roofL && roofR && sf.every((x) => Number.isFinite(x.p));
+        await log(`nave ${lc[0]}: superficies=${sf.length} caras verticales=${[...walls].join(' ')} faldones=${roofL && roofR ? 'ambos' : 'FALTA'} -> ${ok ? 'OK' : 'ERROR'}`);
+      }
       await window.api.selftest.capture(`${variant}-${lc[0]}`);
     }
     for (const tab of ['mapa', 'espectro', 'tablas']) {
@@ -553,6 +562,25 @@ async function selfTest() {
     const p = await exportReport('pdf');
     await log(`${variant}: docx=${d} pdf=${p}`);
   }
+  // nave con techo de poca pendiente (θ < 10°: zonas de techo) – validación de caras
+  state.project.typology = 'nave';
+  state.project.nave.roofSlope = 5;
+  renderAllForms();
+  doCompute(true);
+  for (const lc of ['wt', 'wl']) {
+    state.loadCase = lc;
+    renderLoadCases();
+    applyLoadCase();
+    await wait(300);
+    const sf = viewer.naveSurfaces || [];
+    const walls = new Set(sf.filter((x) => Math.abs(x.n[1]) < 0.5).map((x) => `${Math.round(x.n[0])},${Math.round(x.n[2])}`));
+    const roofL = sf.some((x) => x.n[1] > 0.5 && x.n[0] < 0);
+    const roofR = sf.some((x) => x.n[1] > 0.5 && x.n[0] > 0);
+    await log(`nave θ=5° ${lc}: superficies=${sf.length} caras verticales=${walls.size} faldones=${roofL && roofR ? 'ambos' : 'FALTA'} -> ${walls.size === 4 && roofL && roofR ? 'OK' : 'ERROR'}`);
+    await window.api.selftest.capture(`nave-plana-${lc}`);
+  }
+  state.project.nave.roofSlope = 10;
+
   // edificio de 100 niveles (escala de flechas)
   state.project.typology = 'edificio';
   state.project.edificio.nStories = 100;
