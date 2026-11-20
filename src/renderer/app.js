@@ -69,7 +69,6 @@ function showTab(name) {
   document.querySelectorAll('.tab-panel').forEach((p) => (p.hidden = p.dataset.panel !== name));
   if (name === 'mapa') {
     mapView.draw();
-    mapView.showSheet();
   }
   if (name === 'modelo') viewer.resize();
 }
@@ -678,13 +677,8 @@ async function selfTest() {
   Object.assign(state.project.tanque, { shape: 'cyl', support: 'patas', Hs: 20 });
   // mapa con zoom
   showTab('mapa');
-  mapView.view = { z: 6, px: 0, py: 0 };
-  const d = mapView.dims();
-  const [cx, cy] = mapView.xy(-79.535, 8.952, d);
-  mapView.view.px = d.w / 2 - cx;
-  mapView.view.py = d.h / 2 - cy;
+  mapView.centerOn(-79.535, 8.952, 9);
   mapView.draw();
-  mapView.zoomSheet(1.6, 200, 120);
   await wait(600);
   await window.api.selftest.capture('mapa-zoom');
   mapView.view = { z: 1, px: 0, py: 0 };
