@@ -2,11 +2,13 @@
 //   src/renderer/report-model.js  → modelo de bloques de la memoria de cálculo
 //   src/report/docx.js            → documento Word
 //   src/report/html.js            → HTML imprimible (PDF con Edge / Chrome sin interfaz)
-// Las figuras (espectro, perfiles de fuerza y recortes de los mapas REP) se generan como SVG y se
-// rasterizan con resvg (WASM). Las vistas 3D requieren WebGL y solo están en la app.
-import { execFile, spawn } from "node:child_process";
+// Las figuras 2D (espectro, perfiles de fuerza y recortes de los mapas REP) se generan como SVG y se
+// rasterizan con resvg (WASM). Las vistas 3D se capturan con el visor de la app (three.js) dentro de
+// Edge/Chrome sin interfaz, que también imprime el PDF (ver browser.ts y viewer-page.ts).
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, platform, tmpdir } from "node:os";
+import { BrowserSession, envVar, findBrowser } from "./browser.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { initWasm, Resvg } from "@resvg/resvg-wasm";
@@ -26,11 +28,6 @@ const { buildHtml } = htmlModule as { buildHtml: (model: Obj) => string };
 const ASSETS = dirname(fileURLToPath(import.meta.url));
 const asset = (...p: string[]) => join(ASSETS, ...p);
 
-/** Variable de entorno definida (ignora plantillas sin resolver como "${user_config.x}"). */
-const envVar = (k: string): string | undefined => {
-  const v = process.env[k]?.trim();
-  return v && !v.includes("${") ? v : undefined;
-};
 
 // ---------- rasterizado SVG → PNG ----------
 
@@ -135,7 +132,7 @@ async function sheetCrop(grid: Obj, param: "Ss" | "S1", lon: number, lat: number
   return { ...im, ratio: 1, sheet: s.sheet };
 }
 
-async function collectImages(project: Obj, r: Obj, grid: () => Obj): Promise<Obj> {
+async function collect2dImages(project: Obj, r: Obj, grid: () => Obj): Promise<Obj> {
   const images: Obj = { views: [] };
   images.spectrum = await svgToPng(spectrumSVG(r.seismic.params, spectrumMarkers(r), { w: 900, h: 440 }));
   images.profiles = [];
@@ -153,97 +150,43 @@ async function collectImages(project: Obj, r: Obj, grid: () => Obj): Promise<Obj
   return images;
 }
 
-// ---------- PDF con un navegador Chromium instalado ----------
+// ---------- navegador: vistas 3D y PDF ----------
 
-function browserCandidates(): string[] {
-  const env = process.env;
-  const list: string[] = [];
-  const custom = envVar("FORCECALC_BROWSER");
-  if (custom) list.push(custom);
-  if (platform() === "win32") {
-    const roots = [env["ProgramFiles(x86)"], env.ProgramFiles, env.LOCALAPPDATA].filter(Boolean) as string[];
-    for (const r of roots) {
-      list.push(join(r, "Microsoft", "Edge", "Application", "msedge.exe"));
-      list.push(join(r, "Google", "Chrome", "Application", "chrome.exe"));
-      list.push(join(r, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"));
-    }
-  } else if (platform() === "darwin") {
-    for (const app of ["Google Chrome", "Microsoft Edge", "Chromium", "Brave Browser"]) {
-      list.push(`/Applications/${app}.app/Contents/MacOS/${app}`);
-      list.push(join(homedir(), "Applications", `${app}.app`, "Contents", "MacOS", app));
-    }
-  } else {
-    for (const b of ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge", "brave-browser"]) {
-      for (const d of ["/usr/bin", "/usr/local/bin", "/snap/bin"]) list.push(join(d, b));
-    }
-    list.push("/opt/google/chrome/chrome", "/opt/pw-browsers/chromium/chrome-linux64/chrome", "/opt/pw-browsers/chromium/chrome-linux/chrome");
-  }
-  return list;
+export { findBrowser };
+
+const escHtml = (s: string) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
+
+const fontData = (file: string) => {
+  const p = asset("fonts", file);
+  return existsSync(p) ? `data:font/woff2;base64,${readFileSync(p).toString("base64")}` : "";
+};
+
+function fontFaceCss(): string {
+  const f = (fam: string, pkg: string, w: number) => `@font-face{font-family:'${fam}';font-weight:${w};src:url('${fontData(`${pkg}-latin-${w}-normal.woff2`)}') format('woff2');}`;
+  return [400, 500, 600, 700].map((w) => f("Barlow", "barlow", w)).join("") + [400, 600].map((w) => f("Barlow Semi Condensed", "barlow-semi-condensed", w)).join("");
 }
 
-export function findBrowser(): string | null {
-  return browserCandidates().find((p) => p && existsSync(p)) ?? null;
-}
-
-const cssString = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, " ")}"`;
-
-/** HTML de la app con las fuentes incrustadas y pie de página con numeración (márgenes de @page). */
+/** HTML de la app con las fuentes incrustadas (buildHtml apunta a node_modules de la app). */
 function printableHtml(model: Obj): string {
-  let html = buildHtml(model);
-  // buildHtml apunta a las fuentes en node_modules de la app; aquí se incrustan como data URL.
-  html = html.replace(/url\('file:[^']*?\/([\w-]+-latin-\d+-normal\.woff2)'\)/g, (_m, file: string) => {
-    const p = asset("fonts", file);
-    return existsSync(p) ? `url('data:font/woff2;base64,${readFileSync(p).toString("base64")}')` : "url('')";
-  });
-  const footer = `font-family:sans-serif;font-size:8px;color:#555`;
-  const css =
-    `@page{size:Letter;margin:0.6in 0.7in;` +
-    `@bottom-left{content:${cssString(`${model.title} — REP-2021`)};${footer}}` +
-    `@bottom-right{content:"Página " counter(page) " de " counter(pages);${footer}}}` +
-    `*{-webkit-print-color-adjust:exact;print-color-adjust:exact}`;
-  return html.replace("</style>", `${css}\n</style>`);
+  const html = buildHtml(model).replace(/url\('file:[^']*?\/([\w-]+-latin-\d+-normal\.woff2)'\)/g, (_m, file: string) => `url('${fontData(file)}')`);
+  return html.replace("</style>", "*{-webkit-print-color-adjust:exact;print-color-adjust:exact}\n</style>");
 }
 
-function run(cmd: string, args: string[], timeoutMs: number): Promise<void> {
-  return new Promise((ok, fail) => {
-    execFile(cmd, args, { timeout: timeoutMs, windowsHide: true }, (err, _out, stderr) => {
-      if (err) fail(new Error(`${err.message}${stderr ? `\n${String(stderr).slice(-800)}` : ""}`));
-      else ok();
-    });
-  });
-}
+/** Mismo pie de página que la exportación PDF de la app (src/main/main.js). */
+const footerTemplate = (title: string) =>
+  `<div style="font-size:8px;width:100%;padding:0 0.7in;color:#555;display:flex;justify-content:space-between;font-family:sans-serif"><span>${escHtml(title)} — REP-2021</span><span>Página <span class="pageNumber"></span> de <span class="totalPages"></span></span></div>`;
 
-async function htmlToPdf(html: string, target: string): Promise<string> {
-  const browser = findBrowser();
-  if (!browser) {
-    throw new Error(
-      "No se encontró Microsoft Edge, Google Chrome ni Chromium para generar el PDF. Instale uno de ellos, " +
-        "indique su ruta en la configuración de la extensión (variable FORCECALC_BROWSER), o genere el reporte en formato 'docx'.",
-    );
-  }
-  const work = mkdtempSync(join(tmpdir(), "fc-report-"));
-  try {
-    const htmlFile = join(work, "reporte.html");
-    writeFileSync(htmlFile, html, "utf8");
-    const args = [
-      "--headless",
-      "--disable-gpu",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-extensions",
-      `--user-data-dir=${join(work, "perfil")}`,
-      "--no-pdf-header-footer",
-      `--print-to-pdf=${target}`,
-    ];
-    if (platform() === "linux" && process.getuid?.() === 0) args.push("--no-sandbox");
-    args.push(pathToFileURL(htmlFile).href);
-    rmSync(target, { force: true });
-    await run(browser, args, 120_000);
-    if (!existsSync(target)) throw new Error(`El navegador (${browser}) no generó el PDF.`);
-    return browser;
-  } finally {
-    rmSync(work, { recursive: true, force: true });
-  }
+/** Vistas 3D con el visor de la app (viewer-bundle.js) en la sesión del navegador. */
+async function render3dViews(session: BrowserSession, project: Obj, work: string): Promise<{ views: Img[]; viewEnv: Img | null }> {
+  const page = join(work, "visor.html");
+  writeFileSync(
+    page,
+    `<!doctype html><html><head><meta charset="utf-8"><style>${fontFaceCss()}html,body{margin:0;background:#fff}#viewer{width:1400px;height:840px}</style></head>` +
+      `<body><div id="viewer"></div><script src="${pathToFileURL(asset("viewer-bundle.js")).href}"></script></body></html>`,
+    "utf8",
+  );
+  await session.goto(pathToFileURL(page).href);
+  return session.evaluate(`window.renderViews(${JSON.stringify(project)})`, 180_000);
 }
 
 // ---------- API ----------
@@ -280,41 +223,76 @@ export interface ReportOutput {
 export async function generateReport(
   project: Obj,
   result: Obj,
-  opts: { formats: ("docx" | "pdf" | "html")[]; outputDir: string; fileName?: string; grid: () => Obj },
+  opts: { formats: ("docx" | "pdf" | "html")[]; outputDir: string; fileName?: string; views3d: boolean; grid: () => Obj },
 ): Promise<ReportOutput> {
-  const images = await collectImages(project, result, opts.grid);
-  const model = buildReportModel(project, result, images) as Obj;
-  mkdirSync(opts.outputDir, { recursive: true });
-  const base = (opts.fileName || model.fileName).replace(/[\\/:*?"<>|]+/g, "").trim() || "Memoria-cargas";
   const out: ReportOutput = { files: [], figures: [], errors: [] };
-  out.figures = [
-    "espectro de diseño",
-    ...images.profiles.map((_: unknown, i: number) => `perfil de fuerzas ${i ? "Y" : "X"}`),
-    ...(images.mapSs ? [`mapa Ss-${images.mapSs.sheet}`] : []),
-    ...(images.mapS1 ? [`mapa S1-${images.mapS1.sheet}`] : []),
-  ];
+  const images = await collect2dImages(project, result, opts.grid);
+  const wantPdf = opts.formats.includes("pdf");
 
-  if (opts.formats.includes("docx")) {
-    const p = freePath(opts.outputDir, base, "docx");
-    writeFileSync(p, await buildDocx(model));
-    out.files.push({ format: "docx", path: p });
-  }
-  if (opts.formats.includes("pdf") || opts.formats.includes("html")) {
-    const html = printableHtml(model);
-    if (opts.formats.includes("html")) {
-      const p = freePath(opts.outputDir, base, "html");
-      writeFileSync(p, html, "utf8");
-      out.files.push({ format: "html", path: p });
-    }
-    if (opts.formats.includes("pdf")) {
-      const p = freePath(opts.outputDir, base, "pdf");
+  // Navegador: solo si hace falta (vistas 3D o PDF). Si no hay, se generan igual el Word/HTML sin vistas 3D.
+  let session: BrowserSession | null = null;
+  const work = mkdtempSync(join(tmpdir(), "fc-report-"));
+  try {
+    if (opts.views3d || wantPdf) {
       try {
-        out.browser = await htmlToPdf(html, p);
-        out.files.push({ format: "pdf", path: p });
+        session = await BrowserSession.launch();
+        out.browser = session.path;
       } catch (e) {
-        out.errors.push(`PDF: ${(e as Error).message}`);
+        out.errors.push(`${(e as Error).message} Sin navegador no se incluyen las vistas 3D${wantPdf ? " ni se genera el PDF" : ""}.`);
       }
     }
+    if (session && opts.views3d) {
+      try {
+        const v = await render3dViews(session, project, work);
+        images.views = v.views;
+        images.viewEnv = v.viewEnv;
+      } catch (e) {
+        out.errors.push(`Vistas 3D: ${(e as Error).message}`);
+      }
+    }
+
+    const model = buildReportModel(project, result, images) as Obj;
+    mkdirSync(opts.outputDir, { recursive: true });
+    const base = (opts.fileName || model.fileName).replace(/[\\/:*?"<>|]+/g, "").trim() || "Memoria-cargas";
+    out.figures = [
+      ...images.views.map((v: Img) => `vista 3D ${String(v.caption).replace(/^Figura: (.*?) – .*$/, "$1")}`),
+      ...(images.viewEnv ? ["vista 3D de la envolvente"] : []),
+      "espectro de diseño",
+      ...images.profiles.map((_: unknown, i: number) => `perfil de fuerzas ${i ? "Y" : "X"}`),
+      ...(images.mapSs ? [`mapa Ss-${images.mapSs.sheet}`] : []),
+      ...(images.mapS1 ? [`mapa S1-${images.mapS1.sheet}`] : []),
+    ];
+
+    if (opts.formats.includes("docx")) {
+      const p = freePath(opts.outputDir, base, "docx");
+      writeFileSync(p, await buildDocx(model));
+      out.files.push({ format: "docx", path: p });
+    }
+    if (opts.formats.includes("html") || (wantPdf && session)) {
+      const html = printableHtml(model);
+      if (opts.formats.includes("html")) {
+        const p = freePath(opts.outputDir, base, "html");
+        writeFileSync(p, html, "utf8");
+        out.files.push({ format: "html", path: p });
+      }
+      if (wantPdf && session) {
+        try {
+          const tmpHtml = join(work, "reporte.html");
+          writeFileSync(tmpHtml, html, "utf8");
+          await session.goto(pathToFileURL(tmpHtml).href);
+          await session.evaluate("document.fonts.ready.then(() => true)");
+          const pdf = await session.printToPdf(footerTemplate(model.title));
+          const p = freePath(opts.outputDir, base, "pdf");
+          writeFileSync(p, pdf);
+          out.files.push({ format: "pdf", path: p });
+        } catch (e) {
+          out.errors.push(`PDF: ${(e as Error).message}`);
+        }
+      }
+    }
+  } finally {
+    await session?.close();
+    rmSync(work, { recursive: true, force: true });
   }
   return out;
 }

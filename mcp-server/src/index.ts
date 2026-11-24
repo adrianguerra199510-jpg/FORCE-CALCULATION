@@ -22,7 +22,7 @@ import { SECTIONS, OCCUPANCY } from "../../src/renderer/forms.js";
 import { summarize, table, num, type Obj } from "./format.js";
 import { generateReport, defaultOutputDir, openFile } from "./report.js";
 
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 const CHARACTER_LIMIT = 100_000;
 
 // ---------- utilidades ----------
@@ -296,10 +296,10 @@ Ejemplos:
     "forcecalc_generate_report",
     {
       title: "Generar memoria de cálculo (Word / PDF)",
-      description: `Calcula la estructura y guarda la memoria de cálculo de cargas de viento y sismo en Word (.docx) y/o PDF, con el mismo contenido y formato que exporta la app Force Calculation: descripción del proyecto, normativa, parámetros sísmicos, fuerzas sísmicas y de viento por nivel, envolvente por cara, combinaciones de carga, figuras (espectro de diseño, perfiles de fuerzas y recorte de los mapas Ss/S1 cuando el sitio se da por coordenadas) y bloque de firma.
+      description: `Calcula la estructura y guarda la memoria de cálculo de cargas de viento y sismo en Word (.docx) y/o PDF, con el mismo contenido y formato que exporta la app Force Calculation: descripción del proyecto, normativa, parámetros sísmicos, fuerzas sísmicas y de viento por nivel, envolvente por cara, combinaciones de carga, figuras (vistas 3D del modelo por caso de carga y de la envolvente, espectro de diseño, perfiles de fuerzas y recorte de los mapas Ss/S1 cuando el sitio se da por coordenadas) y bloque de firma.
 
 Acepta los mismos datos que forcecalc_compute más 'meta' (cliente, ingeniero, idoneidad, etc.). Devuelve las rutas de los archivos creados; nunca sobrescribe un reporte existente.
-El PDF se imprime con Microsoft Edge, Google Chrome o Chromium instalado en el equipo. Las vistas 3D del modelo solo están en el reporte exportado desde la app.
+Las vistas 3D y el PDF usan Microsoft Edge, Google Chrome o Chromium instalado en el equipo (sin interfaz); si no hay ninguno, el Word se genera sin vistas 3D.
 
 Ejemplo: typology='nave', site={lat:8.98, lon:-79.52}, structure={span:25, length:50}, meta={nombre:'Galera Tocumen', ingeniero:'Ing. Pérez', idoneidad:'2015-006-123'}, formats=['docx','pdf']`,
       inputSchema: z.strictObject({
@@ -312,14 +312,18 @@ Ejemplo: typology='nave', site={lat:8.98, lon:-79.52}, structure={span:25, lengt
           .describe("Formatos a generar: 'docx' (Word), 'pdf', 'html' (vista imprimible)"),
         output_dir: z.string().min(1).optional().describe(`Carpeta de destino (por defecto ${"~/Documents/Force Calculation"})`),
         file_name: z.string().min(1).max(150).optional().describe("Nombre del archivo sin extensión (por defecto 'Memoria-cargas-<proyecto>')"),
+        include_3d_views: z
+          .boolean()
+          .default(true)
+          .describe("Incluir las vistas 3D del modelo (una por caso de carga y la envolvente), capturadas con el visor de la app"),
         open_file: z.boolean().default(false).describe("Abrir el primer archivo generado con la aplicación predeterminada"),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false, title: "Generar reporte" },
     },
-    async ({ formats, output_dir, file_name, open_file, ...input }) => {
+    async ({ formats, output_dir, file_name, include_3d_views, open_file, ...input }) => {
       const { project, result, notes } = buildAndCompute(input);
       const outputDir = output_dir ? resolvePath(output_dir.replace(/^~(?=$|[\\/])/, homedir())) : defaultOutputDir();
-      const out = await generateReport(project, result, { formats: [...new Set(formats)], outputDir, fileName: file_name, grid: loadGrid });
+      const out = await generateReport(project, result, { formats: [...new Set(formats)], outputDir, fileName: file_name, views3d: include_3d_views, grid: loadGrid });
       if (!out.files.length) throw new Error(out.errors.join("\n") || "No se generó ningún archivo.");
       if (open_file) openFile(out.files[0].path);
 
@@ -331,7 +335,7 @@ Ejemplo: typology='nave', site={lat:8.98, lon:-79.52}, structure={span:25, lengt
         "",
         `${(TYPOLOGIES as Obj)[project.typology]} · ${project.meta.nombre} · SDS = ${num(p.SDS, 3)} g, SD1 = ${num(p.SD1, 3)} g, categoría sísmica ${p.sdc}`,
         `Figuras incluidas: ${out.figures.join(", ")}.`,
-        ...(out.browser ? [`PDF impreso con: ${out.browser}`] : []),
+        ...(out.browser ? [`Navegador usado para vistas 3D / PDF: ${out.browser}`] : []),
         ...notes.map((n) => `> ${n}`),
         ...(out.errors.length ? ["", "**No se pudo generar todo:**", ...out.errors.map((e) => `- ${e}`)] : []),
         ...(result.warnings?.length ? ["", "Advertencias del cálculo (también incluidas en el reporte):", ...result.warnings.map((w: string) => `- ${w}`)] : []),

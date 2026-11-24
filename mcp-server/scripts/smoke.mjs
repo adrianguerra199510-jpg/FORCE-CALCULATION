@@ -73,7 +73,7 @@ assert.equal(out.isError, true);
 // Reporte Word para cada tipología (sin navegador) y Word + PDF de un edificio con mapas
 const paths = (r) => [...txt(r).matchAll(/`([^`]+\.(?:docx|pdf|html))`/g)].map((m) => m[1]);
 for (const typology of ['edificio', 'nave', 'torre', 'tanque', 'valla', 'generico']) {
-  const r = await call('forcecalc_generate_report', { typology, formats: ['docx'], meta: { nombre: `Prueba ${typology}` } });
+  const r = await call('forcecalc_generate_report', { typology, formats: ['docx'], include_3d_views: typology !== 'edificio', meta: { nombre: `Prueba ${typology}` } });
   const [docx] = paths(r);
   assert.ok(docx && existsSync(docx), `${typology}: no se creó el docx`);
   assert.equal(readFileSync(docx).subarray(0, 2).toString(), 'PK', `${typology}: docx inválido`);
@@ -83,8 +83,12 @@ const full = await call('forcecalc_generate_report', {
 });
 assert.match(txt(full), /mapa Ss-\d+/);
 const pdf = paths(full).find((p) => p.endsWith('.pdf'));
-if (pdf) assert.equal(readFileSync(pdf).subarray(0, 5).toString(), '%PDF-');
-else console.error('Aviso: no hay navegador para el PDF en este equipo:', txt(full).split('\n').find((l) => l.startsWith('- PDF')));
+if (pdf) {
+  assert.equal(readFileSync(pdf).subarray(0, 5).toString(), '%PDF-');
+  // con navegador también deben venir las vistas 3D (4 casos + envolvente en un edificio)
+  assert.match(txt(full), /vista 3D Viento X, vista 3D Viento Y, vista 3D Sismo X, vista 3D Sismo Y, vista 3D de la envolvente/);
+  assert.doesNotMatch(txt(full), /No se pudo generar todo/);
+} else console.error('Aviso: no hay navegador para el PDF en este equipo:', txt(full).split('\n').find((l) => l.startsWith('- PDF')));
 // No sobrescribe: el segundo reporte con el mismo nombre se guarda como "(2)"
 const again = await call('forcecalc_generate_report', { typology: 'nave', formats: ['docx'], meta: { nombre: 'Prueba nave' } });
 assert.match(paths(again)[0], /\(2\)\.docx$/);

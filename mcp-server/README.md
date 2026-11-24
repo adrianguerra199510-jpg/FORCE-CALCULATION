@@ -44,10 +44,13 @@ completo del motor con combinaciones LRFD/ASD, envolvente por cara y geometría.
 - Se genera con los mismos módulos de la app (`src/renderer/report-model.js`, `src/report/docx.js` y `src/report/html.js`),
   así que el contenido coincide con el reporte que exporta la app: parámetros sísmicos, fuerzas por nivel, viento, envolvente por cara,
   combinaciones, observaciones y bloque de firma.
-- Figuras incluidas: espectro de diseño, perfiles de fuerzas por nivel y, si el sitio se da por coordenadas, recortes de los mapas Ss y S1.
-  Las **vistas 3D** del modelo necesitan el visor WebGL y solo aparecen en el reporte exportado desde la app.
-- El **PDF** se imprime con Microsoft Edge (incluido en Windows), Google Chrome o Chromium, en modo sin interfaz. Si no se encuentra
-  ninguno, el Word se genera igual y se avisa. La ruta del navegador se puede indicar en la configuración de la extensión.
+- Figuras incluidas: **vistas 3D del modelo** (una por caso de carga: viento y sismo en cada dirección, más la envolvente de presiones
+  por cara), espectro de diseño, perfiles de fuerzas por nivel y, si el sitio se da por coordenadas, recortes de los mapas Ss y S1.
+- Las vistas 3D se capturan con el mismo visor de la app (`src/renderer/viewer3d.js`, three.js) dentro de Microsoft Edge (incluido en
+  Windows), Google Chrome o Chromium sin interfaz, con WebGL por software (no requiere tarjeta gráfica). El mismo navegador imprime
+  el **PDF** con el pie de página de la app. Se controla por el protocolo DevTools (`--remote-debugging-pipe`), sin dependencias extra.
+- Si no hay navegador, el Word se genera igual sin vistas 3D y se avisa. La ruta del navegador se puede indicar en la configuración
+  de la extensión. `include_3d_views: false` omite las vistas.
 - Los archivos se guardan en `Documentos/Force Calculation` (configurable en la extensión o con `output_dir`) y nunca se sobrescriben:
   un nombre repetido se guarda como `nombre (2).docx`.
 
@@ -62,10 +65,11 @@ a nombre del Ing. Pérez."_
 
 ```bash
 npm install
-npm run build     # chequeo de tipos + dist/ (index.js con src/calc y src/report, fuentes, resvg.wasm, mapas)
+npm run build     # chequeo de tipos + dist/ (index.js, viewer-bundle.js, fuentes, resvg.wasm, mapas)
 npm run smoke     # prueba el servidor compilado con un cliente MCP real
 npm run pack      # genera release/force-calculation.mcpb
 ```
 
-El servidor importa directamente `../src/calc`, `../src/report` y `../src/renderer/{forms,report-model,charts}.js`.
+El servidor importa directamente `../src/calc`, `../src/report` y `../src/renderer/{forms,report-model,charts}.js`;
+`dist/viewer-bundle.js` empaqueta `../src/renderer/viewer3d.js` con three.js para el navegador.
 Después de cambiar el motor de cálculo o el reporte de la app, ejecute `npm run pack` para regenerar el paquete.

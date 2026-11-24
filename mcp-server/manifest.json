@@ -3,9 +3,9 @@
   "manifest_version": "0.3",
   "name": "force-calculation",
   "display_name": "Force Calculation REP-2021",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Cargas de viento y sismo según el REP-2021 de Panamá (ASCE 7-05), con el motor de cálculo de Force Calculation.",
-  "long_description": "Calcula cargas de viento (Cap. 6, Método 2) y sismo (fuerza lateral equivalente, Cap. 11/12/15) para edificios, naves industriales, torres, tanques, vallas y volúmenes genéricos. Lee Ss y S1 de los mapas oficiales del REP por coordenadas, calcula parámetros sísmicos de diseño, perfiles de presión de viento y lista los sistemas resistentes de las Tablas 12.2-1 y 15.4-2. Genera la memoria de cálculo en Word y PDF con el mismo formato que la app. Todo se calcula localmente, sin conexión a internet.",
+  "long_description": "Calcula cargas de viento (Cap. 6, Método 2) y sismo (fuerza lateral equivalente, Cap. 11/12/15) para edificios, naves industriales, torres, tanques, vallas y volúmenes genéricos. Lee Ss y S1 de los mapas oficiales del REP por coordenadas, calcula parámetros sísmicos de diseño, perfiles de presión de viento y lista los sistemas resistentes de las Tablas 12.2-1 y 15.4-2. Genera la memoria de cálculo en Word y PDF con el mismo formato que la app, incluidas las vistas 3D del modelo. Todo se calcula localmente, sin conexión a internet.",
   "author": {
     "name": "Force Calculation"
   },
@@ -87,7 +87,7 @@
     },
     "browser_path": {
       "type": "file",
-      "title": "Navegador para PDF (opcional)",
+      "title": "Navegador para vistas 3D y PDF (opcional)",
       "description": "Ruta de Edge, Chrome o Chromium. Vacío = se busca automáticamente",
       "required": false
     }

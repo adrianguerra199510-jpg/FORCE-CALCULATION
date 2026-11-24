@@ -29,6 +29,28 @@ await build({
   },
 });
 
+// Visor 3D de la app para el navegador sin interfaz (vistas del reporte).
+// La app sirve OrbitControls desde src/renderer/vendor (copia de postinstall); aquí se toma de three.
+const vendorAlias = {
+  name: 'vendor-alias',
+  setup(b) {
+    b.onResolve({ filter: /\/vendor\/OrbitControls\.js$/ }, async (args) =>
+      b.resolve('three/examples/jsm/controls/OrbitControls.js', { kind: args.kind, resolveDir: process.cwd() }));
+  },
+};
+await build({
+  entryPoints: ['src/viewer-page.ts'],
+  bundle: true,
+  platform: 'browser',
+  target: 'chrome110',
+  format: 'iife',
+  outfile: 'dist/viewer-bundle.js',
+  legalComments: 'none',
+  minify: true,
+  nodePaths: ['node_modules'],
+  plugins: [vendorAlias],
+});
+
 /** WOFF 1.0 → TTF/OTF (resvg no lee WOFF). */
 function woffToSfnt(woff) {
   if (woff.readUInt32BE(0) !== 0x774f4646) throw new Error('No es un archivo WOFF');
@@ -74,4 +96,4 @@ for (const [pkg, short] of [['barlow', 'barlow'], ['barlow-semi-condensed', 'bar
 copyFileSync('node_modules/@resvg/resvg-wasm/index_bg.wasm', 'dist/resvg.wasm');
 copyFileSync('../src/data/rep-maps/grid.json', 'dist/grid.json');
 cpSync('../src/data/rep-maps/sheets', 'dist/sheets', { recursive: true });
-console.log('dist/ listo: index.js, grid.json, resvg.wasm, fonts/, sheets/');
+console.log('dist/ listo: index.js, viewer-bundle.js, grid.json, resvg.wasm, fonts/, sheets/');
