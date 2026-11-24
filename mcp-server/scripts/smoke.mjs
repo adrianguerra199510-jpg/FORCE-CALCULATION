@@ -1,15 +1,22 @@
 // Prueba del servidor compilado: lo lanza por stdio, llama cada herramienta y sale con error si algo falla.
 import { strict as assert } from 'node:assert';
 import { Client } from '@modelcontextprotocol/client';
-import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const entry = process.argv[2] ?? 'dist/index.js';
 const client = new Client({ name: 'smoke', version: '1.0.0' });
-await client.connect(new StdioClientTransport({ command: 'node', args: [entry] }));
+const outDir = mkdtempSync(join(tmpdir(), 'fc-smoke-'));
+await client.connect(new StdioClientTransport({
+  command: 'node', args: [entry],
+  env: { ...getDefaultEnvironment(), FORCECALC_OUTPUT_DIR: outDir, FORCECALC_BROWSER: process.env.FORCECALC_BROWSER ?? '' },
+}));
 
 const { tools } = await client.listTools();
 assert.deepEqual(tools.map((t) => t.name).sort(), [
-  'forcecalc_compute', 'forcecalc_describe_inputs', 'forcecalc_list_systems',
+  'forcecalc_compute', 'forcecalc_describe_inputs', 'forcecalc_generate_report', 'forcecalc_list_systems',
   'forcecalc_lookup_ss_s1', 'forcecalc_seismic_parameters', 'forcecalc_wind_pressure',
 ]);
 const call = async (name, args) => {
@@ -63,8 +70,28 @@ assert.match(bad.content[0].text, /Claves válidas/);
 const out = await client.callTool({ name: 'forcecalc_lookup_ss_s1', arguments: { lat: 8.98, lon: 79.52 } });
 assert.equal(out.isError, true);
 
+// Reporte Word para cada tipología (sin navegador) y Word + PDF de un edificio con mapas
+const paths = (r) => [...txt(r).matchAll(/`([^`]+\.(?:docx|pdf|html))`/g)].map((m) => m[1]);
+for (const typology of ['edificio', 'nave', 'torre', 'tanque', 'valla', 'generico']) {
+  const r = await call('forcecalc_generate_report', { typology, formats: ['docx'], meta: { nombre: `Prueba ${typology}` } });
+  const [docx] = paths(r);
+  assert.ok(docx && existsSync(docx), `${typology}: no se creó el docx`);
+  assert.equal(readFileSync(docx).subarray(0, 2).toString(), 'PK', `${typology}: docx inválido`);
+}
+const full = await call('forcecalc_generate_report', {
+  typology: 'edificio', site: { lat: 9.36, lon: -79.9 }, meta: { nombre: 'Prueba PDF', ingeniero: 'Ing. Prueba' }, formats: ['docx', 'pdf'],
+});
+assert.match(txt(full), /mapa Ss-\d+/);
+const pdf = paths(full).find((p) => p.endsWith('.pdf'));
+if (pdf) assert.equal(readFileSync(pdf).subarray(0, 5).toString(), '%PDF-');
+else console.error('Aviso: no hay navegador para el PDF en este equipo:', txt(full).split('\n').find((l) => l.startsWith('- PDF')));
+// No sobrescribe: el segundo reporte con el mismo nombre se guarda como "(2)"
+const again = await call('forcecalc_generate_report', { typology: 'nave', formats: ['docx'], meta: { nombre: 'Prueba nave' } });
+assert.match(paths(again)[0], /\(2\)\.docx$/);
+
 const res = await client.readResource({ uri: 'forcecalc://rep2021' });
 assert.match(res.contents[0].text, /REP-2021/);
 
 await client.close();
+rmSync(outDir, { recursive: true, force: true });
 console.error('Smoke test OK');

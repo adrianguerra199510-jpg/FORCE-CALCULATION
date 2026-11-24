@@ -5,7 +5,8 @@
  * Transporte stdio: lo lanza el cliente MCP (Claude Desktop, Claude Code, etc.) como subproceso.
  */
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
@@ -19,8 +20,9 @@ import { BUILDING_SYSTEMS, NONBUILDING_SYSTEMS } from "../../src/calc/systems.js
 import { lookup as mapLookup, COVERAGE_WARN_KM, COVERAGE_MAX_KM } from "../../src/calc/maplookup.js";
 import { SECTIONS, OCCUPANCY } from "../../src/renderer/forms.js";
 import { summarize, table, num, type Obj } from "./format.js";
+import { generateReport, defaultOutputDir, openFile } from "./report.js";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const CHARACTER_LIMIT = 100_000;
 
 // ---------- utilidades ----------
@@ -158,6 +160,99 @@ function describeFields(fields: Field[], defaults: Obj): string {
     .join("\n");
 }
 
+// ---------- proyecto: entradas comunes, armado y cálculo ----------
+
+const MetaInput = z.strictObject({
+  nombre: z.string().max(200).optional().describe("Nombre del proyecto"),
+  cliente: z.string().max(200).optional().describe("Cliente / propietario"),
+  ubicacion: z.string().max(300).optional().describe("Ubicación (descripción)"),
+  ingeniero: z.string().max(200).optional().describe("Ingeniero responsable"),
+  idoneidad: z.string().max(100).optional().describe("Número de idoneidad"),
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Fecha AAAA-MM-DD (por defecto hoy)"),
+  notas: z.string().max(4000).optional().describe("Notas para el reporte"),
+});
+
+const ProjectInputShape = {
+  typology: z.enum(TYPOLOGY_IDS).describe("Tipología estructural"),
+  site: SiteInput.optional().describe("Sitio y parámetros sísmicos"),
+  wind: WindInput.optional().describe("Parámetros de viento"),
+  structure: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe("Datos de la tipología (p. ej. {nStories: 8, Bx: 30}). Claves válidas: forcecalc_describe_inputs"),
+  project_name: z.string().max(200).optional().describe("Nombre del proyecto (equivale a meta.nombre)"),
+};
+
+interface ProjectInput {
+  typology: Typology;
+  site?: Obj;
+  wind?: Obj;
+  structure?: Obj;
+  project_name?: string;
+  meta?: Obj;
+}
+
+/** Arma el proyecto como lo haría la app (valores por defecto + datos dados) y lo calcula. */
+function buildAndCompute({ typology, site, wind, structure, project_name, meta }: ProjectInput) {
+  const base = defaultProject() as Obj;
+  const defaults = base[typology] as Obj;
+
+  // Validar claves de la tipología contra los valores por defecto de la app
+  const unknownKeys = Object.keys(structure ?? {}).filter((k) => !(k in defaults));
+  if (unknownKeys.length) {
+    throw new Error(
+      `Claves no reconocidas para '${typology}': ${unknownKeys.join(", ")}. ` +
+        `Claves válidas: ${Object.keys(defaults).join(", ")}. Use forcecalc_describe_inputs para ver su significado.`,
+    );
+  }
+  const struct: Obj = { ...(structure ?? {}) };
+  if (typology === "generico" && Array.isArray(struct.volumes)) {
+    const tpl = (defaults.volumes as Obj[])[0];
+    struct.volumes = (struct.volumes as unknown[]).map((v, i) => {
+      if (!isPlain(v)) throw new Error(`structure.volumes[${i}] debe ser un objeto con las claves: ${Object.keys(tpl).join(", ")}`);
+      return { ...tpl, name: `Cuerpo ${i + 1}`, ...v };
+    });
+  }
+
+  const notes: string[] = [];
+  const siteIn: Obj = { ...(site ?? {}) };
+  if (siteIn.lat !== undefined && siteIn.lon !== undefined && (siteIn.Ss === undefined || siteIn.S1 === undefined)) {
+    const m = spectralLookup(siteIn.lat, siteIn.lon);
+    siteIn.Ss ??= m.Ss;
+    siteIn.S1 ??= m.S1;
+    siteIn.source = "mapa";
+    siteIn.mapDistKm = m.distKm;
+    notes.push(
+      `Ss = ${m.Ss} g y S1 = ${m.S1} g leídos de los mapas REP en (${siteIn.lat}, ${siteIn.lon}); distancia al contorno digitalizado más cercano ${m.distKm} km` +
+        (m.status !== "ok" ? ` — cobertura ${m.status === "baja" ? "baja" : "fuera de rango"}: verificar en el mapa oficial.` : "."),
+    );
+  } else if (siteIn.Ss === undefined && siteIn.S1 === undefined) {
+    notes.push(`No se indicó sitio: se usan Ss = ${base.site.Ss} g y S1 = ${base.site.S1} g por defecto (Ciudad de Panamá). Pase site.lat/lon o Ss/S1.`);
+  }
+
+  const project = deepMerge(base, {
+    typology,
+    site: siteIn,
+    wind: wind ?? {},
+    [typology]: struct,
+    meta: { ...(project_name ? { nombre: project_name } : {}), ...(meta ?? {}) },
+  });
+
+  let r: Obj;
+  try {
+    r = compute(project) as Obj;
+  } catch (e) {
+    throw new Error(`El motor de cálculo rechazó los datos: ${(e as Error).message}. Revise los valores con forcecalc_describe_inputs.`);
+  }
+  const bad = Object.entries((r.seismic?.directions ?? {}) as Obj).filter(([, d]) => !Number.isFinite((d as Obj).V));
+  if (bad.length) {
+    throw new Error(
+      `El cortante sísmico resultó no numérico en ${bad.map(([k]) => k).join(", ")}. Revise que las dimensiones, pesos y períodos sean números positivos.`,
+    );
+  }
+  return { project, result: r, notes };
+}
+
 // ---------- servidor ----------
 
 function createServer(): McpServer {
@@ -175,82 +270,17 @@ Tipologías: edificio (varios niveles), nave (industrial a dos aguas), torre (ce
 
 Todo lo que no se indique toma el valor por defecto de la app. Llame antes a forcecalc_describe_inputs para ver los campos de 'structure' de cada tipología.
 Si se dan lat/lon y no Ss/S1, Ss y S1 se leen de los mapas REP automáticamente.
+Para la memoria de cálculo en Word/PDF use forcecalc_generate_report con los mismos datos.
 
 Ejemplos:
   - Edificio de 10 pisos de concreto en Colón: typology='edificio', site={lat:9.36, lon:-79.9}, wind={region:'Atlantico', exposure:'D'}, structure={nStories:10, systemX:'C5', systemY:'C5'}
   - Nave de 25×50 m: typology='nave', structure={span:25, length:50, eaveHeight:7}`,
-      inputSchema: z.strictObject({
-        typology: z.enum(TYPOLOGY_IDS).describe("Tipología estructural"),
-        site: SiteInput.optional().describe("Sitio y parámetros sísmicos"),
-        wind: WindInput.optional().describe("Parámetros de viento"),
-        structure: z
-          .record(z.string(), z.unknown())
-          .optional()
-          .describe("Datos de la tipología (p. ej. {nStories: 8, Bx: 30}). Claves válidas: forcecalc_describe_inputs"),
-        project_name: z.string().max(200).optional().describe("Nombre del proyecto (solo informativo)"),
-        response_format: ResponseFormat,
-      }),
+      inputSchema: z.strictObject({ ...ProjectInputShape, response_format: ResponseFormat }),
       annotations: { ...ro, title: "Calcular cargas" },
     },
-    async ({ typology, site, wind, structure, project_name, response_format }) => {
-      const base = defaultProject() as Obj;
-      const defaults = base[typology] as Obj;
-
-      // Validar claves de la tipología contra los valores por defecto de la app
-      const unknownKeys = Object.keys(structure ?? {}).filter((k) => !(k in defaults));
-      if (unknownKeys.length) {
-        throw new Error(
-          `Claves no reconocidas para '${typology}': ${unknownKeys.join(", ")}. ` +
-            `Claves válidas: ${Object.keys(defaults).join(", ")}. Use forcecalc_describe_inputs para ver su significado.`,
-        );
-      }
-      const struct: Obj = { ...(structure ?? {}) };
-      if (typology === "generico" && Array.isArray(struct.volumes)) {
-        const tpl = (defaults.volumes as Obj[])[0];
-        struct.volumes = (struct.volumes as unknown[]).map((v, i) => {
-          if (!isPlain(v)) throw new Error(`structure.volumes[${i}] debe ser un objeto con las claves: ${Object.keys(tpl).join(", ")}`);
-          return { ...tpl, name: `Cuerpo ${i + 1}`, ...v };
-        });
-      }
-
-      const notes: string[] = [];
-      const siteIn: Obj = { ...(site ?? {}) };
-      if (siteIn.lat !== undefined && siteIn.lon !== undefined && (siteIn.Ss === undefined || siteIn.S1 === undefined)) {
-        const m = spectralLookup(siteIn.lat, siteIn.lon);
-        siteIn.Ss ??= m.Ss;
-        siteIn.S1 ??= m.S1;
-        siteIn.source = "mapa";
-        siteIn.mapDistKm = m.distKm;
-        notes.push(
-          `Ss = ${m.Ss} g y S1 = ${m.S1} g leídos de los mapas REP en (${siteIn.lat}, ${siteIn.lon}); distancia al contorno digitalizado más cercano ${m.distKm} km` +
-            (m.status !== "ok" ? ` — cobertura ${m.status === "baja" ? "baja" : "fuera de rango"}: verificar en el mapa oficial.` : "."),
-        );
-      } else if (siteIn.Ss === undefined && siteIn.S1 === undefined) {
-        notes.push(`No se indicó sitio: se usan Ss = ${base.site.Ss} g y S1 = ${base.site.S1} g por defecto (Ciudad de Panamá). Pase site.lat/lon o Ss/S1.`);
-      }
-
-      const project = deepMerge(base, {
-        typology,
-        site: siteIn,
-        wind: wind ?? {},
-        [typology]: struct,
-        meta: project_name ? { nombre: project_name } : {},
-      });
-
-      let r: Obj;
-      try {
-        r = compute(project) as Obj;
-      } catch (e) {
-        throw new Error(`El motor de cálculo rechazó los datos: ${(e as Error).message}. Revise los valores con forcecalc_describe_inputs.`);
-      }
-      const bad = Object.entries((r.seismic?.directions ?? {}) as Obj).filter(([, d]) => !Number.isFinite((d as Obj).V));
-      if (bad.length) {
-        throw new Error(
-          `El cortante sísmico resultó no numérico en ${bad.map(([k]) => k).join(", ")}. Revise que las dimensiones, pesos y períodos sean números positivos.`,
-        );
-      }
-
-      const title = `${project_name ? project_name + " — " : ""}${(TYPOLOGIES as Obj)[typology]}`;
+    async ({ response_format, ...input }) => {
+      const { project, result: r, notes } = buildAndCompute(input);
+      const title = `${input.project_name ? input.project_name + " — " : ""}${(TYPOLOGIES as Obj)[input.typology]}`;
       if (response_format === "json") {
         return json({ input: project, notes, references: REFERENCES, result: r });
       }
@@ -258,6 +288,55 @@ Ejemplos:
       if (!notes.length) return text(md);
       const cut = md.indexOf("\n");
       return text([md.slice(0, cut), "", ...notes.map((n) => `> ${n}`), md.slice(cut)].join("\n"));
+    },
+  );
+
+  // 1b. Memoria de cálculo en Word / PDF
+  server.registerTool(
+    "forcecalc_generate_report",
+    {
+      title: "Generar memoria de cálculo (Word / PDF)",
+      description: `Calcula la estructura y guarda la memoria de cálculo de cargas de viento y sismo en Word (.docx) y/o PDF, con el mismo contenido y formato que exporta la app Force Calculation: descripción del proyecto, normativa, parámetros sísmicos, fuerzas sísmicas y de viento por nivel, envolvente por cara, combinaciones de carga, figuras (espectro de diseño, perfiles de fuerzas y recorte de los mapas Ss/S1 cuando el sitio se da por coordenadas) y bloque de firma.
+
+Acepta los mismos datos que forcecalc_compute más 'meta' (cliente, ingeniero, idoneidad, etc.). Devuelve las rutas de los archivos creados; nunca sobrescribe un reporte existente.
+El PDF se imprime con Microsoft Edge, Google Chrome o Chromium instalado en el equipo. Las vistas 3D del modelo solo están en el reporte exportado desde la app.
+
+Ejemplo: typology='nave', site={lat:8.98, lon:-79.52}, structure={span:25, length:50}, meta={nombre:'Galera Tocumen', ingeniero:'Ing. Pérez', idoneidad:'2015-006-123'}, formats=['docx','pdf']`,
+      inputSchema: z.strictObject({
+        ...ProjectInputShape,
+        meta: MetaInput.optional().describe("Datos de portada y firma del reporte"),
+        formats: z
+          .array(z.enum(["docx", "pdf", "html"]))
+          .min(1)
+          .default(["docx", "pdf"])
+          .describe("Formatos a generar: 'docx' (Word), 'pdf', 'html' (vista imprimible)"),
+        output_dir: z.string().min(1).optional().describe(`Carpeta de destino (por defecto ${"~/Documents/Force Calculation"})`),
+        file_name: z.string().min(1).max(150).optional().describe("Nombre del archivo sin extensión (por defecto 'Memoria-cargas-<proyecto>')"),
+        open_file: z.boolean().default(false).describe("Abrir el primer archivo generado con la aplicación predeterminada"),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false, title: "Generar reporte" },
+    },
+    async ({ formats, output_dir, file_name, open_file, ...input }) => {
+      const { project, result, notes } = buildAndCompute(input);
+      const outputDir = output_dir ? resolvePath(output_dir.replace(/^~(?=$|[\\/])/, homedir())) : defaultOutputDir();
+      const out = await generateReport(project, result, { formats: [...new Set(formats)], outputDir, fileName: file_name, grid: loadGrid });
+      if (!out.files.length) throw new Error(out.errors.join("\n") || "No se generó ningún archivo.");
+      if (open_file) openFile(out.files[0].path);
+
+      const p = result.seismic.params;
+      const lines = [
+        "# Memoria de cálculo generada",
+        "",
+        ...out.files.map((f) => `- **${f.format.toUpperCase()}**: \`${f.path}\``),
+        "",
+        `${(TYPOLOGIES as Obj)[project.typology]} · ${project.meta.nombre} · SDS = ${num(p.SDS, 3)} g, SD1 = ${num(p.SD1, 3)} g, categoría sísmica ${p.sdc}`,
+        `Figuras incluidas: ${out.figures.join(", ")}.`,
+        ...(out.browser ? [`PDF impreso con: ${out.browser}`] : []),
+        ...notes.map((n) => `> ${n}`),
+        ...(out.errors.length ? ["", "**No se pudo generar todo:**", ...out.errors.map((e) => `- ${e}`)] : []),
+        ...(result.warnings?.length ? ["", "Advertencias del cálculo (también incluidas en el reporte):", ...result.warnings.map((w: string) => `- ${w}`)] : []),
+      ];
+      return text(lines.join("\n"));
     },
   );
 

@@ -12,7 +12,7 @@ Servidor [MCP](https://modelcontextprotocol.io) que expone el motor de cálculo 
 
 ## Instalación en Claude Code u otro cliente
 
-Desempaquete el `.mcpb` (es un ZIP), o compile desde el código (ver abajo), y registre el servidor:
+Desempaquete el `.mcpb` (es un ZIP; la carpeta `server/` debe quedar completa), o compile desde el código (ver abajo), y registre el servidor:
 
 ```bash
 claude mcp add force-calculation -- node /ruta/a/server/index.js
@@ -29,6 +29,7 @@ Para un archivo de configuración JSON (`mcpServers`):
 | Herramienta | Qué hace |
 |---|---|
 | `forcecalc_compute` | Cálculo completo de viento y sismo de una tipología: edificio, nave, torre, tanque, valla o genérico. Con `lat`/`lon` lee Ss y S1 de los mapas REP. |
+| `forcecalc_generate_report` | Memoria de cálculo en **Word (.docx)** y **PDF** (o HTML), con el mismo contenido y formato que exporta la app. Acepta los mismos datos que `forcecalc_compute` más `meta` (cliente, ingeniero, idoneidad, fecha, notas). |
 | `forcecalc_describe_inputs` | Campos de entrada de cada tipología, con unidades, valores por defecto y opciones. |
 | `forcecalc_lookup_ss_s1` | Ss y S1 de los mapas de aceleraciones espectrales del REP (§5.12). |
 | `forcecalc_seismic_parameters` | Fa, Fv, SDS, SD1, T0, Ts, TL, I, categoría de diseño sísmico y Sa(T). |
@@ -38,17 +39,33 @@ Para un archivo de configuración JSON (`mcpServers`):
 Cada herramienta acepta `response_format`: `markdown`, un resumen con tablas, o `json`, el resultado
 completo del motor con combinaciones LRFD/ASD, envolvente por cara y geometría.
 
+## Reporte Word / PDF
+
+- Se genera con los mismos módulos de la app (`src/renderer/report-model.js`, `src/report/docx.js` y `src/report/html.js`),
+  así que el contenido coincide con el reporte que exporta la app: parámetros sísmicos, fuerzas por nivel, viento, envolvente por cara,
+  combinaciones, observaciones y bloque de firma.
+- Figuras incluidas: espectro de diseño, perfiles de fuerzas por nivel y, si el sitio se da por coordenadas, recortes de los mapas Ss y S1.
+  Las **vistas 3D** del modelo necesitan el visor WebGL y solo aparecen en el reporte exportado desde la app.
+- El **PDF** se imprime con Microsoft Edge (incluido en Windows), Google Chrome o Chromium, en modo sin interfaz. Si no se encuentra
+  ninguno, el Word se genera igual y se avisa. La ruta del navegador se puede indicar en la configuración de la extensión.
+- Los archivos se guardan en `Documentos/Force Calculation` (configurable en la extensión o con `output_dir`) y nunca se sobrescriben:
+  un nombre repetido se guarda como `nombre (2).docx`.
+
+Variables de entorno, para clientes distintos de Claude Desktop: `FORCECALC_OUTPUT_DIR` (carpeta de reportes) y `FORCECALC_BROWSER`
+(ruta de Edge/Chrome).
+
 Ejemplo de pedido a Claude: _"Calcula viento y sismo para un edificio de 8 pisos de pórticos
-especiales de concreto en Colón (9.36, −79.90), suelo clase C, exposición D."_
+especiales de concreto en Colón (9.36, −79.90), suelo clase C, exposición D, y genera la memoria en Word y PDF
+a nombre del Ing. Pérez."_
 
 ## Desarrollo
 
 ```bash
 npm install
-npm run build     # chequeo de tipos + empaquetado en dist/index.js (incluye src/calc)
+npm run build     # chequeo de tipos + dist/ (index.js con src/calc y src/report, fuentes, resvg.wasm, mapas)
 npm run smoke     # prueba el servidor compilado con un cliente MCP real
 npm run pack      # genera release/force-calculation.mcpb
 ```
 
-El servidor importa directamente `../src/calc` y `../src/renderer/forms.js`. Después de cambiar
-el motor de cálculo de la app, ejecute `npm run pack` para regenerar el paquete.
+El servidor importa directamente `../src/calc`, `../src/report` y `../src/renderer/{forms,report-model,charts}.js`.
+Después de cambiar el motor de cálculo o el reporte de la app, ejecute `npm run pack` para regenerar el paquete.
