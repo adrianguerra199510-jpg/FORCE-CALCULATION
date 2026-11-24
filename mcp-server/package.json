@@ -1,0 +1,27 @@
+{
+  "name": "force-calculation-mcp-server",
+  "version": "1.0.0",
+  "description": "Servidor MCP de Force Calculation: cargas de viento y sismo según REP-2021 (Panamá) / ASCE 7-05",
+  "type": "module",
+  "private": true,
+  "bin": { "force-calculation-mcp-server": "dist/index.js" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && node build.mjs",
+    "start": "node dist/index.js",
+    "smoke": "node scripts/smoke.mjs",
+    "pack": "npm run build && node scripts/pack.mjs"
+  },
+  "engines": { "node": ">=20.3" },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/mcpb/main/schemas/mcpb-manifest-v0.3.schema.json",
+  "manifest_version": "0.3",
+  "name": "force-calculation",
+  "display_name": "Force Calculation REP-2021",
+  "version": "1.0.0",
+  "description": "Cargas de viento y sismo según el REP-2021 de Panamá (ASCE 7-05), con el motor de cálculo de Force Calculation.",
+  "long_description": "Calcula cargas de viento (Cap. 6, Método 2) y sismo (fuerza lateral equivalente, Cap. 11/12/15) para edificios, naves industriales, torres, tanques, vallas y volúmenes genéricos. Lee Ss y S1 de los mapas oficiales del REP por coordenadas, calcula parámetros sísmicos de diseño, perfiles de presión de viento y lista los sistemas resistentes de las Tablas 12.2-1 y 15.4-2. Todo se calcula localmente, sin conexión a internet.",
+  "author": { "name": "Force Calculation" },
+  "repository": { "type": "git", "url": "https://github.com/adrianguerra199510-jpg/force-calculation" },
+  "icon": "icon.png",
+  "license": "UNLICENSED",
+  "keywords": ["viento", "sismo", "REP-2021", "ASCE 7-05", "Panamá", "ingeniería estructural"],
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": { "command": "node", "args": ["${__dirname}/server/index.js"] }
+  },
+  "tools": [
+    { "name": "forcecalc_compute", "description": "Calcula cargas de viento y sismo de una estructura completa" },
+    { "name": "forcecalc_describe_inputs", "description": "Lista los datos de entrada de cada tipología" },
+    { "name": "forcecalc_lookup_ss_s1", "description": "Ss y S1 de los mapas REP por coordenadas" },
+    { "name": "forcecalc_seismic_parameters", "description": "SDS, SD1, categoría sísmica y espectro de diseño" },
+    { "name": "forcecalc_wind_pressure", "description": "Velocidad básica y perfil de presión qz" },
+    { "name": "forcecalc_list_systems", "description": "Sistemas resistentes a sismo con R, Ω0 y Cd" }
+  ],
+  "compatibility": {
+    "platforms": ["win32", "darwin", "linux"],
+    "runtimes": { "node": ">=20.0.0" }
+  }
+}
